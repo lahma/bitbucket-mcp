@@ -83,15 +83,7 @@ internal static class McpServerSetup
             sp.GetRequiredService<ICredentialProvider>(),
             sp.GetRequiredService<ILoggerFactory>()));
 
-        // The tool-facing serializer options. Ours goes FIRST in the chain (D6) so that JIT and AOT
-        // resolve identically; the SDK resolver stays second for MCP protocol types, which our
-        // context returns null for. Cleared first because copying the SDK's options copies its
-        // chain too, and a duplicate entry ahead of ours would decide the tie.
-        var jsonOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
-        jsonOptions.TypeInfoResolverChain.Clear();
-        jsonOptions.TypeInfoResolverChain.Add(BitbucketToolJsonContext.Default);
-        jsonOptions.TypeInfoResolverChain.Add(McpJsonUtilities.DefaultOptions.TypeInfoResolver!);
-        jsonOptions.MakeReadOnly();
+        var jsonOptions = CreateToolSerializerOptions();
 
         services
             .AddMcpServer(serverOptions =>
@@ -133,6 +125,31 @@ internal static class McpServerSetup
         }
 
         return Cli.CliDispatcher.ExitSuccess;
+    }
+
+    /// <summary>
+    /// Builds the tool-facing serializer options that every <c>WithTools&lt;T&gt;</c> registration —
+    /// and therefore every generated tool schema — is created with.
+    /// </summary>
+    /// <remarks>
+    /// Ours goes FIRST in the chain (D6) so that JIT and AOT resolve identically; the SDK resolver
+    /// stays second for MCP protocol types, which our context returns null for. The chain is cleared
+    /// first because copying the SDK's options copies its chain too, and a duplicate entry ahead of
+    /// ours would decide the tie.
+    /// <para>
+    /// Factored out of <see cref="RunStdioAsync"/> so the schema tests can generate schemas with the
+    /// exact options the server ships, rather than a hand-rolled copy that could drift out of step.
+    /// </para>
+    /// </remarks>
+    internal static JsonSerializerOptions CreateToolSerializerOptions()
+    {
+        var jsonOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
+        jsonOptions.TypeInfoResolverChain.Clear();
+        jsonOptions.TypeInfoResolverChain.Add(BitbucketToolJsonContext.Default);
+        jsonOptions.TypeInfoResolverChain.Add(McpJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        jsonOptions.MakeReadOnly();
+
+        return jsonOptions;
     }
 
     private static PosixSignalRegistration? RegisterShutdownSignal(PosixSignal signal, CancellationTokenSource shutdown)
