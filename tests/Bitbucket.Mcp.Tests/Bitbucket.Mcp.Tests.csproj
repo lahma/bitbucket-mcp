@@ -21,4 +21,9 @@
     <ProjectReference Include="../../src/Bitbucket.Mcp/Bitbucket.Mcp.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Golden Bitbucket API response fixtures (.json, .diff), embedded so tests are path-independent. -->
+    <EmbeddedResource Include="Fixtures/**" />
+  </ItemGroup>
+
 </Project>
