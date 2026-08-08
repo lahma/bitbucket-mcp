@@ -1,5 +1,9 @@
 using System.Runtime.InteropServices;
 
+using Bitbucket.Mcp.Authentication;
+using Bitbucket.Mcp.Configuration;
+using Bitbucket.Mcp.Http;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -30,17 +34,47 @@ internal static class McpServerSetup
         using var sigInt = RegisterShutdownSignal(PosixSignal.SIGINT, shutdown);
         using var sigTerm = RegisterShutdownSignal(PosixSignal.SIGTERM, shutdown);
 
+        // Environment variables only (D3). This is the one and only read; everything downstream
+        // takes the resulting options object.
+        var options = BitbucketMcpOptions.FromEnvironment();
+
         // D3: a bare ServiceCollection, not Host.CreateApplicationBuilder - no configuration
         // providers, metrics or lifetime machinery in the cold-start path.
         var services = new ServiceCollection();
 
         services.AddLogging(logging =>
         {
-            logging.SetMinimumLevel(LogLevel.Information);
+            logging.SetMinimumLevel(options.LogLevel);
             logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
         });
 
-        // T10: options / TokenStore / ICredentialProvider / BitbucketApiClient registrations.
+        // Every registration below is an explicit factory rather than AddSingleton<T>(): the
+        // constructors are internal (which the container's reflection-based selection does not
+        // see), and writing the graph out by hand keeps it reflection-free for AOT and readable as
+        // the wiring diagram it is.
+        //
+        // None of these run at startup. They are all constructed on the first tool call, and
+        // constructing them still touches neither disk nor network - authentication happens inside
+        // GetAuthenticationHeaderAsync, where a failure can be reported to the caller.
+        services.AddSingleton(options);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(sp => new TokenStore(
+            sp.GetRequiredService<BitbucketMcpOptions>(),
+            sp.GetRequiredService<ILoggerFactory>(),
+            sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new OAuthTokenClient(
+            sp.GetRequiredService<BitbucketMcpOptions>(),
+            sp.GetRequiredService<ILoggerFactory>(),
+            sp.GetRequiredService<TimeProvider>()));
+
+        // T9 replaces this with the loopback listener plus browser launcher. Until then an
+        // interactive sign-in reports that it is impossible instead of hanging.
+        services.AddSingleton<IInteractiveAuthenticator>(NullInteractiveAuthenticator.Instance);
+
+        services.AddSingleton(CredentialProviderFactory.Create);
+        services.AddSingleton(sp => new BitbucketApiClient(
+            sp.GetRequiredService<ICredentialProvider>(),
+            sp.GetRequiredService<ILoggerFactory>()));
 
         // T10: the tool-facing serializer options. Ours goes FIRST in the chain (D6) so that JIT
         // and AOT resolve identically; the SDK resolver stays second for MCP protocol types.
