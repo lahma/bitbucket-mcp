@@ -1,0 +1,8 @@
+{
+  "_fixture": "SYNTHETIC — Bitbucket's non-standard 555 body for an oversized diff. 555 is not a defined HttpStatusCode, which is exactly why it has a fixture of its own. Not captured from a live account.",
+  "type": "error",
+  "error": {
+    "message": "Diff too large to render.",
+    "detail": "This pull request changes too many lines to generate a combined diff. Request individual files with the path query parameter, or use the diffstat endpoint."
+  }
+}

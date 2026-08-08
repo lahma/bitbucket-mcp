@@ -1,0 +1,14 @@
+{
+  "_fixture": "SYNTHETIC — a pull request nobody has been asked to review yet: Bitbucket omits `reviewers` and `participants` entirely rather than sending empty arrays, and a fields=-trimmed response omits everything else that is unset. Not captured from a live account.",
+  "id": 500,
+  "title": "Document the diffstat-first workflow",
+  "state": "OPEN",
+  "created_on": "2026-08-05T13:00:00.000000+00:00",
+  "updated_on": "2026-08-05T13:00:00.000000+00:00",
+  "source": {
+    "branch": { "name": "docs/diffstat-first" }
+  },
+  "destination": {
+    "branch": { "name": "main" }
+  }
+}

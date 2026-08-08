@@ -1,0 +1,11 @@
+{
+  "_fixture": "SYNTHETIC — POST .../approve answers with the caller's own participant entry, not the pull request. Not captured from a live account.",
+  "role": "REVIEWER",
+  "approved": true,
+  "state": "approved",
+  "user": {
+    "display_name": "Ada Byron",
+    "uuid": "{aaaabbbb-cccc-dddd-eeee-ffff00001111}",
+    "nickname": "ada"
+  }
+}
