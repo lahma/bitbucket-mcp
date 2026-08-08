@@ -154,3 +154,58 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
 spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
 over stdio, asserting `serverInfo.name` and all ten tool names. CI runs `Test` and `SmokeTest` on
 every push and pull request.
+
+## Release engineering
+
+Releases are cut by pushing a `v*` tag. `.github/workflows/release.yml` is hand-written (the
+`[GitHubActions]` generator has no matrix support) and runs five publish legs — one per RID, each
+on its own hardware — followed by a `release` job that assembles the GitHub Release:
+
+| RID | Runner |
+|---|---|
+| `linux-x64` | `ubuntu-latest` |
+| `linux-arm64` | `ubuntu-24.04-arm` |
+| `win-x64` | `windows-latest` |
+| `win-arm64` | `windows-11-arm` |
+| `osx-arm64` | `macos-latest` |
+
+Every leg runs `dotnet fallout SmokeTest --runtime <rid>`, and `SmokeTest` depends on `PublishAot`,
+so each leg compiles its own binary, speaks JSON-RPC to it *on the architecture it targets*, and
+only then uploads the archive. **Never ship a binary that has not answered a handshake on its own
+architecture** — that is the whole reason the arm64 legs are not cross-compiled. `fail-fast` is off
+so one broken runtime cannot mask the state of the other four.
+
+`CHANGELOG.md` stays the version authority here too: `CreateGitHubRelease` refuses to publish
+unless `GITHUB_REF_NAME` equals `v{version parsed from CHANGELOG.md}`. To release, land the
+changelog entry first, then tag that commit.
+
+Three properties of the release path were verified end to end by a throwaway `v0.0.1-test` tag
+(branch, tag and prerelease deleted afterwards) rather than reasoned about:
+
+- **R1 — arm64 runner availability: resolved, no fallback needed.** On this public repo both
+  `ubuntu-24.04-arm` and `windows-11-arm` were assigned within seconds and completed the full
+  AOT publish plus handshake (linux-arm64 1m19s, win-arm64 2m6s; the x64 and osx legs 1m–2m15s).
+  Neither image needed extra native-toolchain setup. If that ever regresses, the documented
+  fallback is to cross-compile the affected RID from the x64 runner of the same OS with its smoke
+  step skipped — and to mark it as unverified in both `release.yml` and here, because an
+  unverified binary must not go out silently.
+- **R2 — the tar.gz exec bit: `CompressionExtensions.TarGZipTo` cannot be used.** It archives
+  through SharpZipLib's `TarEntry.CreateEntryFromFile`, which hard-codes *every* entry's mode to
+  `0700` instead of reading it off disk. That ships `LICENSE` and `README.md` executable and the
+  binary unreadable to anyone but the extracting user. `PublishAot` therefore invokes the `tar`
+  CLI (`ProcessTasks.StartProcess`), which is present on the GitHub runners and in Git Bash. The
+  released archives were downloaded and inspected: `-rwxr-xr-x` on `bitbucket-mcp`,
+  `-rw-r--r--` on `LICENSE` and `README.md`, flat at the archive root, on GNU tar (linux-x64,
+  linux-arm64) and bsdtar (osx-arm64) alike. Windows RIDs keep using `ZipTo` — a zip carries no
+  Unix mode and the payload is a `.exe`.
+- **The release body**: `ICreateGitHubRelease` composes it with
+  `ChangelogTasks.ExtractChangelogSectionNotes`, which only recognises `## ` headings and ends a
+  section at the first line that is not a bullet. `CHANGELOG.md` uses `#` headings (what
+  `ReleaseNotesParser` wants) and wraps its bullets over several lines, so pointed straight at it
+  that helper returns nothing and the release ships empty. `Build.WriteReleaseNotes` reflows the
+  newest section into `artifacts/release-notes.md` — one single-line bullet per entry — and
+  `IHasChangelog.ChangelogFile` points there. Keep changelog entries as `- ` bullets with wrapped
+  continuation lines and this keeps working.
+
+`Prerelease` follows the version string (`Version.Contains('-')`), so a `1.0.0-rc.1` or
+`0.0.1-test` tag publishes as a prerelease and never displaces the latest stable release.
