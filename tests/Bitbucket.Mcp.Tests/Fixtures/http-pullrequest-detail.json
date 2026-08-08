@@ -1,0 +1,73 @@
+{
+  "_fixture": "SYNTHETIC — hand-written to match GET /2.0/repositories/{workspace}/{slug}/pullrequests/{id} with FieldSets.PullRequestDetail. Not captured from a live Bitbucket account.",
+  "id": 412,
+  "title": "Add retry handler for 429 responses",
+  "state": "OPEN",
+  "draft": false,
+  "created_on": "2026-07-14T09:12:33.415882+00:00",
+  "updated_on": "2026-08-02T16:41:07.902114+00:00",
+  "comment_count": 7,
+  "task_count": 1,
+  "close_source_branch": true,
+  "description": "Retries 408/429/502/503/504 with jittered backoff.\n\nHonours `Retry-After` up to 60s.",
+  "reason": "",
+  "author": {
+    "display_name": "Jane Doe",
+    "uuid": "{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}",
+    "nickname": "jane"
+  },
+  "source": {
+    "branch": { "name": "feature/retry-handler" },
+    "commit": { "hash": "a1b2c3d4e5f6" },
+    "repository": { "full_name": "acme/widget-api" }
+  },
+  "destination": {
+    "branch": { "name": "main" },
+    "commit": { "hash": "0f9e8d7c6b5a" },
+    "repository": { "full_name": "acme/widget-api" }
+  },
+  "reviewers": [
+    {
+      "display_name": "Ada Byron",
+      "uuid": "{aaaabbbb-cccc-dddd-eeee-ffff00001111}",
+      "nickname": "ada"
+    },
+    {
+      "display_name": "Grace Hopper",
+      "uuid": "{22223333-4444-5555-6666-777788889999}",
+      "nickname": "grace"
+    }
+  ],
+  "participants": [
+    {
+      "role": "REVIEWER",
+      "approved": true,
+      "state": "approved",
+      "user": {
+        "display_name": "Ada Byron",
+        "uuid": "{aaaabbbb-cccc-dddd-eeee-ffff00001111}",
+        "nickname": "ada"
+      }
+    },
+    {
+      "role": "REVIEWER",
+      "approved": false,
+      "state": "changes_requested",
+      "user": {
+        "display_name": "Grace Hopper",
+        "uuid": "{22223333-4444-5555-6666-777788889999}",
+        "nickname": "grace"
+      }
+    },
+    {
+      "role": "PARTICIPANT",
+      "approved": false,
+      "state": null,
+      "user": {
+        "display_name": "Jane Doe",
+        "uuid": "{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}",
+        "nickname": "jane"
+      }
+    }
+  ]
+}

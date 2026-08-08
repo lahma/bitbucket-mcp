@@ -1,0 +1,1 @@
+{"_fixture": "SYNTHETIC", "type": "error", "error": {"message": "title: This field is required.", "detail": "The pull request could not be created because it failed validation.", "fields": {"title": ["This field is required."], "source": ["Branch \"feature/does-not-exist\" not found in acme/widget-api.", "Choose a branch that exists on the source repository."]}}}

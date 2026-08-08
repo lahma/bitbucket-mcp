@@ -1,0 +1,44 @@
+{
+  "_fixture": "SYNTHETIC — hand-written to match GET /2.0/repositories/{workspace}/{slug}/pullrequests/{id}/diffstat with FieldSets.DiffStat: modified, added (no `old`), removed (no `new`), renamed (different paths) and a binary file (zero line counts). Not captured from a live account.",
+  "size": 12,
+  "page": 1,
+  "pagelen": 5,
+  "next": "https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/diffstat?fields=next%2Csize%2Cvalues.status&page=2&pagelen=5",
+  "values": [
+    {
+      "status": "modified",
+      "lines_added": 42,
+      "lines_removed": 7,
+      "old": { "path": "src/Bitbucket.Mcp/Http/RetryHandler.cs" },
+      "new": { "path": "src/Bitbucket.Mcp/Http/RetryHandler.cs" }
+    },
+    {
+      "status": "added",
+      "lines_added": 118,
+      "lines_removed": 0,
+      "old": null,
+      "new": { "path": "tests/Bitbucket.Mcp.Tests/Http/RetryHandlerTests.cs" }
+    },
+    {
+      "status": "removed",
+      "lines_added": 0,
+      "lines_removed": 63,
+      "old": { "path": "src/Bitbucket.Mcp/Http/LegacyBackoff.cs" },
+      "new": null
+    },
+    {
+      "status": "renamed",
+      "lines_added": 3,
+      "lines_removed": 3,
+      "old": { "path": "docs/retry.md" },
+      "new": { "path": "docs/http/retry.md" }
+    },
+    {
+      "status": "modified",
+      "lines_added": 0,
+      "lines_removed": 0,
+      "old": { "path": "assets/logo (draft).png" },
+      "new": { "path": "assets/logo (draft).png" }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "_fixture": "SYNTHETIC — the body Bitbucket returns with 202 Accepted when it queues a merge instead of performing it. `merge_result` is absent until the task completes. Not captured from a live account.",
+  "type": "pullrequest_merge_task",
+  "task_status": "PENDING",
+  "links": {
+    "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/e7c0ffee-1234-4a5b-8c9d-0123456789ab"
+    }
+  }
+}
