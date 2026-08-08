@@ -1,0 +1,9 @@
+diff --git src/NoPrefix.cs src/NoPrefix.cs
+index 4444444..5555555 100644
+--- src/NoPrefix.cs
++++ src/NoPrefix.cs
+@@ -5,3 +5,3 @@
+ context one
+-old line
++new line
+ context two

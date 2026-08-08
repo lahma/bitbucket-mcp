@@ -1,0 +1,24 @@
+diff --git a/src/Report.cs b/src/Report.cs
+index 9999999..aaaaaaa 100644
+--- a/src/Report.cs
++++ b/src/Report.cs
+@@ -10,9 +10,9 @@ public sealed class Report
+     public int Total()
+     {
+         var total = 0;
+-        foreach (var item in items)
++        foreach (var item in Items)
+         {
+             total += item.Value;
+         }
+-        return total;
++        return total; // fixed
+     }
+@@ -40,5 +40,7 @@ public sealed class Report
+     public void Dump()
+     {
+         Console.WriteLine("done");
++        Console.WriteLine("done");
++        Console.WriteLine("extra");
+     }
+ }

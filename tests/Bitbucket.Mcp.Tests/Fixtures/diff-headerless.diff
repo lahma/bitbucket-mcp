@@ -1,0 +1,7 @@
+--- a/src/Headerless.cs
++++ b/src/Headerless.cs
+@@ -1,3 +1,3 @@
+ first
+-second
++second changed
+ third
