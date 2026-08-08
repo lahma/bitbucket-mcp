@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>bitbucket-mcp</AssemblyName>
+    <RootNamespace>Bitbucket.Mcp</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <StripSymbols>true</StripSymbols>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <IsPackable>false</IsPackable>
+    <!-- Required for IDE0005 (unnecessary usings) to run under EnforceCodeStyleInBuild;
+         CS1591 is silenced centrally. See https://github.com/dotnet/roslyn/issues/41640. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <!-- Deliberately absent (D9/D10): RuntimeIdentifiers (would pull ILCompiler packs per RID on
+       every restore - the RID reaches publish via -r), PublishSingleFile (ignored under AOT) and
+       SelfContained (implied by PublishAot). -->
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bitbucket.Mcp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+  </ItemGroup>
+
+</Project>

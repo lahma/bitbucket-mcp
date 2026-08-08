@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/solution items/">
+    <File Path="AGENTS.md" />
+    <File Path="CHANGELOG.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="README.md" />
+    <File Path="global.json" />
+    <File Path="nuget.config" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Bitbucket.Mcp/Bitbucket.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bitbucket.Mcp.Tests/Bitbucket.Mcp.Tests.csproj" />
+  </Folder>
+</Solution>
