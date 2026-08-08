@@ -91,6 +91,7 @@ partial class Build : FalloutBuild,
     AbsolutePath PublishDirectory => ArtifactsDirectory / "publish" / Runtime;
     AbsolutePath StagingDirectory => ArtifactsDirectory / "staging" / Runtime;
     AbsolutePath ArchivesDirectory => ArtifactsDirectory / "archives";
+    AbsolutePath ReleaseNotesFile => ArtifactsDirectory / "release-notes.md";
 
     bool IsWindowsRuntime => Runtime.StartsWith("win", StringComparison.OrdinalIgnoreCase);
     string ExecutableName => IsWindowsRuntime ? ProductName + ".exe" : ProductName;
@@ -171,7 +172,17 @@ partial class Build : FalloutBuild,
             }
             else
             {
-                StagingDirectory.TarGZipTo(ArchiveFile, fileMode: FileMode.Create);
+                // R2: NOT CompressionExtensions.TarGZipTo. It goes through SharpZipLib's
+                // TarEntry.CreateEntryFromFile, which hard-codes every entry's mode to 0700 instead of
+                // reading it off disk - the binary would come out of the archive unreadable by anyone
+                // but the extracting user, and LICENSE/README.md would come out executable. The tar CLI
+                // copies the real mode (0755 for a published AOT binary), and both the GitHub runners
+                // and Git Bash on Windows ship it. Files are named explicitly so the archive is flat.
+                ProcessTasks
+                    .StartProcess("tar",
+                        $"-czf {ArchiveFile} -C {StagingDirectory} {ExecutableName} LICENSE README.md")
+                    .AssertWaitForExit()
+                    .AssertZeroExitCode();
             }
 
             Log.Information("Created {Archive}", ArchiveFile);
@@ -382,12 +393,61 @@ partial class Build : FalloutBuild,
 
     string ICreateGitHubRelease.Name => $"v{Version}";
 
+    /// <summary>A version with a pre-release suffix (1.0.0-rc.1, 0.0.1-test) never gets marked "Latest".</summary>
+    bool ICreateGitHubRelease.Prerelease => Version.Contains('-');
+
     IEnumerable<AbsolutePath> ICreateGitHubRelease.AssetFiles => ArchivesDirectory.GlobFiles("*.zip", "*.tar.gz");
 
-    // The guard runs before the inherited release logic: actions are appended in call order.
+    /// <summary>
+    /// The release body is read from here rather than from CHANGELOG.md directly.
+    /// </summary>
+    /// <remarks>
+    /// <c>ICreateGitHubRelease</c> builds the body with <c>ChangelogTasks.ExtractChangelogSectionNotes</c>,
+    /// which only recognises <c>## </c> headings and stops a section at the first line that is not a
+    /// bullet. Our changelog uses <c>#</c> headings (the format <c>ReleaseNotesParser</c> - the version
+    /// authority - expects) and wraps its bullets over several lines, so pointed at CHANGELOG.md that
+    /// helper finds nothing and the release ships with an empty body. <see cref="WriteReleaseNotes"/>
+    /// rewrites the top section into the shape it does understand.
+    /// </remarks>
+    string IHasChangelog.ChangelogFile => ReleaseNotesFile;
+
+    // Both actions run before the inherited release logic: actions are appended in call order.
     Target ICreateGitHubRelease.CreateGitHubRelease => _ => _
         .Executes(AssertReleaseTagMatchesChangelogVersion)
+        .Executes(WriteReleaseNotes)
         .Inherit<ICreateGitHubRelease>();
+
+    /// <summary>
+    /// Rewrites the newest CHANGELOG.md section into <see cref="ReleaseNotesFile"/> as a
+    /// <c>## version</c> heading followed by one single-line bullet per entry, which is the only
+    /// shape <c>ExtractChangelogSectionNotes</c> reads back in full.
+    /// </summary>
+    void WriteReleaseNotes()
+    {
+        var bullets = new List<string>();
+
+        foreach (var line in LatestReleaseNotes.Notes)
+        {
+            // A "- " line opens a new entry; every other line is the continuation of a wrapped one.
+            // The leading prose paragraph has no bullet to continue, so it becomes an entry itself.
+            if (line.StartsWith("- ", StringComparison.Ordinal) || bullets.Count == 0)
+            {
+                bullets.Add(line.StartsWith("- ", StringComparison.Ordinal) ? line[2..] : line);
+            }
+            else
+            {
+                bullets[^1] += " " + line;
+            }
+        }
+
+        var lines = new List<string> { $"## {Version}" };
+        lines.AddRange(bullets.Select(x => $"- {x}"));
+
+        ReleaseNotesFile.Parent.CreateDirectory();
+        ReleaseNotesFile.WriteAllLines(lines.ToArray());
+
+        Log.Information("Wrote {Count} release note(s) to {File}", bullets.Count, ReleaseNotesFile);
+    }
 
     /// <summary>
     /// In CI the git tag is what people see; CHANGELOG.md is what the build believes. If the two
