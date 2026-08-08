@@ -1,12 +1,16 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 using Bitbucket.Mcp.Authentication;
 using Bitbucket.Mcp.Configuration;
 using Bitbucket.Mcp.Http;
+using Bitbucket.Mcp.Tools;
+using Bitbucket.Mcp.Tools.Models;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -79,37 +83,41 @@ internal static class McpServerSetup
             sp.GetRequiredService<ICredentialProvider>(),
             sp.GetRequiredService<ILoggerFactory>()));
 
-        // T10: the tool-facing serializer options. Ours goes FIRST in the chain (D6) so that JIT
-        // and AOT resolve identically; the SDK resolver stays second for MCP protocol types.
-        // var jsonOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
-        // jsonOptions.TypeInfoResolverChain.Clear();
-        // jsonOptions.TypeInfoResolverChain.Add(BitbucketToolJsonContext.Default);
-        // jsonOptions.TypeInfoResolverChain.Add(McpJsonUtilities.DefaultOptions.TypeInfoResolver!);
-        // jsonOptions.MakeReadOnly();
+        // The tool-facing serializer options. Ours goes FIRST in the chain (D6) so that JIT and AOT
+        // resolve identically; the SDK resolver stays second for MCP protocol types, which our
+        // context returns null for. Cleared first because copying the SDK's options copies its
+        // chain too, and a duplicate entry ahead of ours would decide the tie.
+        var jsonOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
+        jsonOptions.TypeInfoResolverChain.Clear();
+        jsonOptions.TypeInfoResolverChain.Add(BitbucketToolJsonContext.Default);
+        jsonOptions.TypeInfoResolverChain.Add(McpJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        jsonOptions.MakeReadOnly();
 
         services
-            .AddMcpServer(options =>
+            .AddMcpServer(serverOptions =>
             {
-                options.ServerInfo = new Implementation
+                serverOptions.ServerInfo = new Implementation
                 {
                     Name = ServerVersion.Name,
                     Version = ServerVersion.Value,
                 };
 
-                // T10: options.ServerInstructions = ServerInstructions.Text;
-
-                // A non-null tool collection is what makes the server advertise the `tools`
-                // capability and answer `tools/list`. `??=` so that once WithTools<T>() registers
-                // real tools (T10) the collection built from DI wins.
-                options.ToolCollection ??= new McpServerPrimitiveCollection<McpServerTool>();
+                // Sent to the client at initialize: the conventions no single tool description can
+                // carry (slugs, diffstat-first, opaque cursors, reviewer UUIDs).
+                serverOptions.ServerInstructions = ServerInstructions.Text;
             })
-            .WithStdioServerTransport();
-
-        // T10: one WithTools<T>(jsonOptions) per tool class - never WithToolsFromAssembly (IL2026).
-        // .WithTools<PullRequestReadTools>(jsonOptions)
-        // .WithTools<PullRequestWriteTools>(jsonOptions);
+            .WithStdioServerTransport()
+            // One WithTools<T>(jsonOptions) per tool class - never WithToolsFromAssembly (IL2026).
+            // These also populate the tool collection, which is what makes the server advertise the
+            // `tools` capability and answer `tools/list`.
+            .WithTools<PullRequestReadTools>(jsonOptions)
+            .WithTools<PullRequestWriteTools>(jsonOptions);
 
         await using var provider = services.BuildServiceProvider();
+
+        // The error funnel's only dependency. Resolved here rather than passed into every tool
+        // method, so that no tool signature carries a parameter the schema then has to exclude.
+        ToolErrors.UseLoggerFactory(provider.GetRequiredService<ILoggerFactory>());
 
         // The SDK registers McpServer as a singleton; running it directly is the SDK's own AOT
         // test-app shape (D3).

@@ -51,10 +51,26 @@ partial class Build : FalloutBuild,
     const string ProductName = "bitbucket-mcp";
 
     /// <summary>
-    /// The tool names <c>tools/list</c> must return, verbatim and complete. Empty until the tool
-    /// layer lands (T10), which replaces this with the ten camelCase names.
+    /// The tool names <c>tools/list</c> must return, verbatim and complete. Grouped read-then-write
+    /// to match the two tool classes; the comparison sorts both sides, so the order here is only
+    /// for readers.
     /// </summary>
-    static readonly string[] ExpectedToolNames = [];
+    static readonly string[] ExpectedToolNames =
+    [
+        // PullRequestReadTools
+        "listPullRequests",
+        "getPullRequest",
+        "getPullRequestDiff",
+        "getPullRequestComments",
+
+        // PullRequestWriteTools
+        "createPullRequest",
+        "updatePullRequest",
+        "addPullRequestComment",
+        "setPullRequestReviewStatus",
+        "mergePullRequest",
+        "declinePullRequest",
+    ];
 
     /// <summary>How long SmokeTest waits for both JSON-RPC responses before giving up.</summary>
     static readonly TimeSpan SmokeTestTimeout = TimeSpan.FromSeconds(30);
