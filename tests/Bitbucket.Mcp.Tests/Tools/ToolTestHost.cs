@@ -62,10 +62,22 @@ internal static class ToolTestHost
     /// A client over a stub transport. The base address stays the real one so that pagination
     /// cursors — which are validated against <c>api.bitbucket.org</c> — behave as in production.
     /// </summary>
+    /// <param name="transport">The innermost handler.</param>
+    /// <param name="credentialProvider">Supplies the <c>Authorization</c> header per request.</param>
+    /// <param name="timeProvider">
+    /// The retry pipeline's clock. Left unset these tests run on the real one, which is only safe
+    /// because every throttled case they drive answers <c>Retry-After: 0</c> or gives up without
+    /// waiting; a case that would sit in the backoff schedule passes a fake clock instead.
+    /// </param>
     internal static BitbucketApiClient CreateClient(
         HttpMessageHandler transport,
-        ICredentialProvider? credentialProvider = null) =>
-        new(credentialProvider ?? new StubCredentialProvider(), NullLoggerFactory.Instance, transport);
+        ICredentialProvider? credentialProvider = null,
+        TimeProvider? timeProvider = null) =>
+        new(credentialProvider ?? new StubCredentialProvider(),
+            NullLoggerFactory.Instance,
+            transport,
+            baseAddress: null,
+            timeProvider);
 
     /// <summary>Options with nothing configured, as if every environment variable were unset.</summary>
     internal static BitbucketMcpOptions CreateOptions(string? defaultWorkspace = "acme") =>

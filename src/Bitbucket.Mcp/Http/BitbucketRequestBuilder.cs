@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Bitbucket.Mcp.Http;
@@ -22,12 +23,30 @@ namespace Bitbucket.Mcp.Http;
 /// so there is no reason to have a second, unescaped path method that could be reached by accident.
 /// </para>
 /// <para>
+/// Escaping alone is not enough for a segment that is <em>entirely</em> dots: <c>.</c> is an
+/// unreserved character, so <see cref="Uri.EscapeDataString(string)"/> leaves <c>..</c> untouched
+/// and RFC 3986 dot-segment removal then collapses the path when the relative URL is resolved
+/// against the base address — a workspace and slug of <c>..</c> would leave the <c>/2.0/</c> prefix
+/// altogether. <see cref="RequireSlug"/> rejects those segments outright, which is the builder's
+/// equivalent of the <c>/2.0/</c> check <see cref="BitbucketCursor"/> applies to model-supplied
+/// cursors.
+/// </para>
+/// <para>
 /// Path and query are accumulated separately, so the call order of
 /// <see cref="Segment(string)"/> and the <c>Query</c> methods does not matter.
 /// </para>
 /// </remarks>
 internal sealed class BitbucketRequestBuilder
 {
+    /// <summary>
+    /// What a rejected segment tells the caller. Written for a model mid-task: it names the two
+    /// arguments that can hold a bad value and says what a good one looks like.
+    /// </summary>
+    private const string NotASlugMessage =
+        "workspace and repository must be real slugs — the two URL segments of " +
+        "bitbucket.org/{workspace}/{repository}, not display names. A blank value, \".\" or \"..\" is " +
+        "not a slug: it would collapse the request path instead of naming a repository.";
+
     private readonly StringBuilder _path;
     private StringBuilder? _query;
 
@@ -42,10 +61,13 @@ internal sealed class BitbucketRequestBuilder
     /// </summary>
     /// <param name="workspace">The workspace <em>URL segment</em>, not its display name.</param>
     /// <param name="repositorySlug">The repository slug.</param>
+    /// <exception cref="ArgumentException">Either value is blank, <c>.</c> or <c>..</c>.</exception>
     internal static BitbucketRequestBuilder Repository(string workspace, string repositorySlug)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(workspace);
-        ArgumentException.ThrowIfNullOrWhiteSpace(repositorySlug);
+        // Validated here as well as in Segment so that the exception names the argument the caller
+        // passed rather than the builder's own parameter.
+        RequireSlug(workspace);
+        RequireSlug(repositorySlug);
 
         return new BitbucketRequestBuilder("repositories")
             .Segment(workspace)
@@ -53,9 +75,10 @@ internal sealed class BitbucketRequestBuilder
     }
 
     /// <summary>Appends one escaped path segment.</summary>
+    /// <exception cref="ArgumentException"><paramref name="value"/> is blank, <c>.</c> or <c>..</c>.</exception>
     internal BitbucketRequestBuilder Segment(string value)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        RequireSlug(value);
 
         _path.Append('/').Append(Uri.EscapeDataString(value));
         return this;
@@ -121,6 +144,26 @@ internal sealed class BitbucketRequestBuilder
 
     /// <inheritdoc />
     public override string ToString() => Build();
+
+    /// <summary>
+    /// Rejects the segments that are not names of anything: blank, <c>.</c> and <c>..</c>. Trimmed
+    /// first, because <c> .. </c> is escaped to <c>%20..%20</c> by
+    /// <see cref="Uri.EscapeDataString(string)"/> but is still a caller who meant <c>..</c>, and
+    /// nothing downstream treats leading or trailing whitespace as part of a slug.
+    /// </summary>
+    private static void RequireSlug(
+        string value,
+        [CallerArgumentExpression(nameof(value))] string? paramName = null)
+    {
+        ArgumentNullException.ThrowIfNull(value, paramName);
+
+        var trimmed = value.AsSpan().Trim();
+
+        if (trimmed.Length == 0 || trimmed is "." or "..")
+        {
+            throw new ArgumentException(NotASlugMessage, paramName);
+        }
+    }
 
     private void AppendQuery(string name, string value)
     {

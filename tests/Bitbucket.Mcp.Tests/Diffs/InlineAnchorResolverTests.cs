@@ -188,6 +188,25 @@ public sealed class InlineAnchorResolverTests
         Assert.Equal(42, anchor.Inline.StartTo);
     }
 
+    /// <summary>
+    /// The snippet picks the side, so <c>startLine</c> is read on that side too: "return total;"
+    /// resolves to the removed line (old 17), and old 13 is a line the diff shows before the change.
+    /// </summary>
+    [Fact]
+    public void SnippetOnTheOldSideTakesItsStartLineFromTheOldSide()
+    {
+        var anchor = InlineAnchorResolver.Resolve(
+            Anchors,
+            ReportPath,
+            codeSnippet: "return total;",
+            startLine: 13);
+
+        Assert.Equal(17, anchor.Inline.From);
+        Assert.Equal(13, anchor.Inline.StartFrom);
+        Assert.Null(anchor.Inline.To);
+        Assert.Null(anchor.Inline.StartTo);
+    }
+
     // -----------------------------------------------------------------------------------------
     // Explicit line + lineType
     // -----------------------------------------------------------------------------------------
@@ -425,6 +444,49 @@ public sealed class InlineAnchorResolverTests
             () => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 45, lineType: DiffLineType.Context, startLine: 19));
 
         Assert.Contains("startLine=19 is not a line the diff of src/Report.cs shows", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same rule in snippet mode, which used to trust <c>startLine</c> outright: the snippet
+    /// resolves to new line 44, but 19 is in neither hunk, so a comment starting there would be
+    /// anchored to a line nothing in this response shows.
+    /// </summary>
+    [Fact]
+    public void StartLineIsCheckedInSnippetModeToo()
+    {
+        var exception = Assert.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
+            Anchors,
+            ReportPath,
+            codeSnippet: "Console.WriteLine(\"extra\");",
+            startLine: 19));
+
+        Assert.Contains(
+            "startLine=19 is not a line the diff of src/Report.cs shows for the file after the change",
+            exception.Message,
+            StringComparison.Ordinal);
+
+        // The range listing is what turns the refusal into a usable retry.
+        Assert.Contains("Lines available after the change (lineType=ADDED or CONTEXT): 10-18, 40-46", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Lines available before the change (lineType=REMOVED): 10-18, 40-44", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And on the old side: "return total;" is the removed line (old 17), so <c>startLine</c> is
+    /// read against the file before the change, where line 9 is one line above the first hunk.
+    /// </summary>
+    [Fact]
+    public void SnippetStartLineIsCheckedOnTheSideTheSnippetResolvedTo()
+    {
+        var exception = Assert.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
+            Anchors,
+            ReportPath,
+            codeSnippet: "return total;",
+            startLine: 9));
+
+        Assert.Contains(
+            "startLine=9 is not a line the diff of src/Report.cs shows for the file before the change",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

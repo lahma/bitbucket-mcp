@@ -210,7 +210,7 @@ internal sealed class RetryHandler : DelegatingHandler
     /// </summary>
     private TimeSpan? NextDelay(HttpResponseMessage response, int attempt)
     {
-        if (!TryGetRetryAfter(response, out var retryAfter))
+        if (!TryGetRetryAfter(response, _timeProvider, out var retryAfter))
         {
             return Backoff(attempt);
         }
@@ -227,7 +227,15 @@ internal sealed class RetryHandler : DelegatingHandler
     /// Reads <c>Retry-After</c> in either documented form: delta-seconds, or an HTTP-date that has
     /// to be turned into a delta against the current time.
     /// </summary>
-    private bool TryGetRetryAfter(HttpResponseMessage response, out TimeSpan value)
+    /// <remarks>
+    /// Shared rather than duplicated: <see cref="BitbucketApiClient"/> reads the same header off the
+    /// final response so a 429 can tell the caller how long to wait, and two parsers of one header
+    /// would eventually disagree about the HTTP-date form.
+    /// </remarks>
+    /// <param name="response">The response to read the header from.</param>
+    /// <param name="timeProvider">The clock an HTTP-date is measured against.</param>
+    /// <param name="value">The wait Bitbucket asked for, never negative.</param>
+    internal static bool TryGetRetryAfter(HttpResponseMessage response, TimeProvider timeProvider, out TimeSpan value)
     {
         value = default;
 
@@ -240,18 +248,37 @@ internal sealed class RetryHandler : DelegatingHandler
 
         if (header.Delta is { } delta)
         {
-            value = delta;
+            value = delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
             return true;
         }
 
         if (header.Date is { } date)
         {
-            var remaining = date - _timeProvider.GetUtcNow();
+            var remaining = date - timeProvider.GetUtcNow();
             value = remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// <c>Retry-After</c> as whole seconds, or <see langword="null"/> when the response carries none
+    /// this handler understands.
+    /// </summary>
+    /// <remarks>
+    /// Rounded up, so "wait 1.4 s" never becomes advice to come back in one; clamped at zero,
+    /// because an HTTP-date already in the past means "now".
+    /// </remarks>
+    internal static int? RetryAfterSeconds(HttpResponseMessage response, TimeProvider timeProvider)
+    {
+        if (!TryGetRetryAfter(response, timeProvider, out var value))
+        {
+            return null;
+        }
+
+        var seconds = Math.Ceiling(value.TotalSeconds);
+        return seconds >= int.MaxValue ? int.MaxValue : (int) Math.Max(seconds, 0);
     }
 
     /// <summary>

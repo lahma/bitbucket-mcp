@@ -120,14 +120,9 @@ internal static class InlineAnchorResolver
         int? line,
         int? startLine)
     {
+        // Non-empty by construction: Resolve only takes this path for a snippet that is not
+        // whitespace, and NormalizeSnippet keeps every trimmed line that has any text left.
         var needle = NormalizeSnippet(codeSnippet, stripDiffMarkers: false);
-
-        if (needle.Count == 0)
-        {
-            throw new InlineAnchorException(string.Create(
-                CultureInfo.InvariantCulture,
-                $"codeSnippet contained no text to look for in {file.Path}. Copy the line to comment on out of the diff, or pass line together with lineType instead."));
-        }
 
         var matches = FindRuns(lines, needle, exact: true);
 
@@ -204,6 +199,15 @@ internal static class InlineAnchorResolver
         if (startLine is not null)
         {
             RequireStartBeforeAnchor(startLine.Value, anchor);
+
+            // The snippet decided the side, so startLine has to be visible on that same side — the
+            // same check ResolveByLine makes. Without it a range could start above the first line
+            // the diff shows, and Bitbucket would anchor the comment somewhere nobody named.
+            if (FindLine(lines, startLine.Value, side) < 0)
+            {
+                throw new InlineAnchorException(LineNotShownMessage(file, lines, startLine.Value, side, "startLine"));
+            }
+
             start = startLine.Value;
         }
 

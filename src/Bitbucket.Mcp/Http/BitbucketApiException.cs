@@ -35,12 +35,17 @@ internal sealed class BitbucketApiException : Exception
     /// <param name="error">Bitbucket's error envelope, when the body parsed as one.</param>
     /// <param name="rawBody">The response body as read; truncated to <see cref="MaxRawBodyLength"/>.</param>
     /// <param name="retryAttempts">How many retries the pipeline had already spent on this request.</param>
+    /// <param name="retryAfterSeconds">
+    /// The <c>Retry-After</c> the failing response carried, in whole seconds, or
+    /// <see langword="null"/> when it carried none.
+    /// </param>
     /// <param name="innerException">The underlying failure, if any.</param>
     internal BitbucketApiException(
         HttpStatusCode statusCode,
         ErrorEnvelopeDto? error,
         string? rawBody,
         int retryAttempts,
+        int? retryAfterSeconds = null,
         Exception? innerException = null)
         : base(BuildMessage(statusCode, error, rawBody, retryAttempts), innerException)
     {
@@ -48,6 +53,7 @@ internal sealed class BitbucketApiException : Exception
         Error = error;
         RawBody = Truncate(rawBody);
         RetryAttempts = retryAttempts;
+        RetryAfterSeconds = retryAfterSeconds;
     }
 
     /// <summary>The HTTP status code the request failed with.</summary>
@@ -61,6 +67,13 @@ internal sealed class BitbucketApiException : Exception
 
     /// <summary>Retries already spent, so a 5xx message can say the request was not simply unlucky once.</summary>
     internal int RetryAttempts { get; }
+
+    /// <summary>
+    /// What <c>Retry-After</c> asked for on the response that finally failed, in whole seconds, or
+    /// <see langword="null"/> when there was no usable header. This is how a 429 can name the wait
+    /// instead of guessing at one.
+    /// </summary>
+    internal int? RetryAfterSeconds { get; }
 
     private static string Truncate(string? body)
     {

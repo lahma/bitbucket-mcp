@@ -116,9 +116,23 @@ internal static class ToolErrors
 
             InlineAnchorException anchor => new McpException(anchor.Message, anchor),
 
+            // An argument this server refused before it reached Bitbucket — today the request
+            // builder's slug guard. It is the caller's mistake, so it reads like the other argument
+            // errors instead of like a bug ("Unexpected error: ArgumentException: …").
+            ArgumentException argument => new McpException(InvalidArgument(argument), argument),
+
             _ => Unexpected(exception, context),
         };
     }
+
+    /// <summary>
+    /// An argument rejected inside the server. The exception's own message already names the
+    /// parameter (<c>ArgumentException</c> appends it), so the funnel only has to say that this is
+    /// the caller's to fix rather than something to retry.
+    /// </summary>
+    private static string InvalidArgument(ArgumentException exception) =>
+        "Invalid argument. " + exception.Message +
+        "\nFix the named argument and call again; retrying unchanged will fail the same way.";
 
     // -------------------------------------------------------------------------------------------
     // Authentication
@@ -291,10 +305,21 @@ internal static class ToolErrors
                 $"\nIt was already retried {exception.RetryAttempts} time(s) with backoff, honouring Retry-After, and was still throttled.");
         }
 
+        // Bitbucket's own number beats a guess. A Retry-After of zero is not one: it means "come
+        // back now", which is exactly what the retries above already did.
+        if (exception.RetryAfterSeconds is { } seconds && seconds > 0)
+        {
+            message.Append(CultureInfo.InvariantCulture,
+                $"\nBitbucket's Retry-After says to try again in ~{seconds}s, and cut the request rate: ask for ");
+        }
+        else
+        {
+            message.Append("\nWait about a minute before calling again, and cut the request rate: ask for ");
+        }
+
         message
-            .Append("\nWait about a minute before calling again, and cut the request rate: ask for fewer items ")
-            .Append("per page, and fetch diffs per file (mode=\"diffstat\" then paths=[...]) instead of whole ")
-            .Append("pull requests.");
+            .Append("fewer items per page, and fetch diffs per file (mode=\"diffstat\" then paths=[...]) instead ")
+            .Append("of whole pull requests.");
 
         return message.ToString();
     }

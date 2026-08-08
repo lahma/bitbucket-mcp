@@ -68,6 +68,12 @@ internal sealed class BitbucketApiClient : IDisposable
     private readonly ILogger _logger;
 
     /// <summary>
+    /// The same clock <see cref="RetryHandler"/> uses, kept because an HTTP-date <c>Retry-After</c>
+    /// on the response that finally failed is only a number of seconds relative to "now".
+    /// </summary>
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
     /// The production constructor: builds its own transport. This is the one the container binds —
     /// the test constructor below cannot be satisfied from the service collection because
     /// <see cref="HttpMessageHandler"/> is not registered.
@@ -105,6 +111,7 @@ internal sealed class BitbucketApiClient : IDisposable
         ArgumentNullException.ThrowIfNull(transport);
 
         _logger = loggerFactory.CreateLogger<BitbucketApiClient>();
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         var retry = new RetryHandler(loggerFactory.CreateLogger<RetryHandler>(), timeProvider)
         {
@@ -685,6 +692,7 @@ internal sealed class BitbucketApiClient : IDisposable
                 SyntheticError("Bitbucket returned a success status with a body this server could not parse."),
                 rawBody: null,
                 retryAttempts,
+                retryAfterSeconds: null,
                 ex);
         }
 
@@ -699,7 +707,12 @@ internal sealed class BitbucketApiClient : IDisposable
     /// Turns a non-2xx response into a <see cref="BitbucketApiException"/>. Bitbucket's <c>555</c>
     /// arrives here like any other status and keeps its numeric value.
     /// </summary>
-    private static async Task ThrowIfNotSuccessAsync(
+    /// <remarks>
+    /// The <c>Retry-After</c> read here is the one on the response that finally failed — the retry
+    /// handler has already honoured (or declined) the earlier ones, so this is the wait the caller
+    /// still has ahead of it.
+    /// </remarks>
+    private async Task ThrowIfNotSuccessAsync(
         HttpResponseMessage response,
         int retryAttempts,
         CancellationToken cancellationToken)
@@ -711,7 +724,12 @@ internal sealed class BitbucketApiClient : IDisposable
 
         var rawBody = await ReadBodySnippetAsync(response, cancellationToken).ConfigureAwait(false);
 
-        throw new BitbucketApiException(response.StatusCode, TryParseError(rawBody), rawBody, retryAttempts);
+        throw new BitbucketApiException(
+            response.StatusCode,
+            TryParseError(rawBody),
+            rawBody,
+            retryAttempts,
+            RetryHandler.RetryAfterSeconds(response, _timeProvider));
     }
 
     private static ErrorEnvelopeDto? TryParseError(string rawBody)

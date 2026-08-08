@@ -356,8 +356,9 @@ if the slugs are right.
 
 **429 Too Many Requests.** Bitbucket's limits are roughly 1,000–10,000 requests per hour. The
 client already retries 429/408/502/503/504 with exponential backoff and honours `Retry-After`; a
-429 that reaches you survived that. Wait a minute, ask for smaller pages, and fetch diffs per file
-rather than per pull request.
+429 that reaches you survived that. The error quotes the wait Bitbucket asked for when it sent one,
+and otherwise says to wait about a minute. Ask for smaller pages, and fetch diffs per file rather
+than per pull request.
 
 **Port 33418 is already in use.** Set `BITBUCKET_OAUTH_CALLBACK_PORT` to a free port **and**
 change the consumer's registered callback URL to match — Bitbucket compares the redirect URI as a

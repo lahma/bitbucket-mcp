@@ -4,6 +4,7 @@ using System.Text;
 
 using Bitbucket.Mcp.Authentication;
 using Bitbucket.Mcp.Http;
+using Bitbucket.Mcp.Tests.Http;
 using Bitbucket.Mcp.Tools;
 
 using ModelContextProtocol;
@@ -328,6 +329,43 @@ public class ToolErrorMappingTests
         Assert.Contains("already retried 3 time(s)", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Retry-After", exception.Message, StringComparison.Ordinal);
         Assert.Contains("mode=\"diffstat\"", exception.Message, StringComparison.Ordinal);
+
+        // Retry-After: 0 is not a wait worth quoting — "try again in ~0s" is what the pipeline
+        // already did three times — so this falls back to the generic advice.
+        Assert.Contains("Wait about a minute", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("~0s", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Nothing to go on: a 429 with no <c>Retry-After</c> at all keeps the generic wait, because
+    /// inventing a number would be worse than admitting there is none.
+    /// </summary>
+    [Fact]
+    public async Task RateLimitingWithoutARetryAfterKeepsTheGenericWait()
+    {
+        using var handler = new StubHttpMessageHandler();
+
+        handler.Fallback = _ => StubHttpMessageHandler.CreateResponse(
+            HttpStatusCode.TooManyRequests,
+            """{"type":"error","error":{"message":"Rate limit exceeded"}}""");
+
+        // With no Retry-After the pipeline falls back to exponential backoff, so this is the one
+        // case here that needs a fake clock rather than the real one.
+        using var client = ToolTestHost.CreateClient(handler, timeProvider: new ManualTimeProvider());
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.GetPullRequestAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                Workspace,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(RetryHandler.MaxAttempts, handler.Requests.Count);
+        Assert.Contains("429", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Wait about a minute", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("try again in ~", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -355,7 +393,11 @@ public class ToolErrorMappingTests
         Assert.Single(handler.Requests);
         Assert.Contains("429", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("already retried", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Wait about a minute", exception.Message, StringComparison.Ordinal);
+
+        // The wait is Bitbucket's own number, not a guess: 120 s is what it asked for, and the
+        // whole reason the request was not retried here.
+        Assert.Contains("try again in ~120s", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Wait about a minute", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>A 400's field errors are the most useful part of it, so they are surfaced by name.</summary>
@@ -461,6 +503,34 @@ public class ToolErrorMappingTests
 
         // The comment was never posted: only the per-file diff was fetched.
         Assert.Single(handler.Requests);
+    }
+
+    /// <summary>
+    /// A workspace or repository of <c>.</c> or <c>..</c> is refused by the request builder, before
+    /// dot-segment removal can walk the URL out of the <c>/2.0/</c> prefix. It reaches the caller as
+    /// an argument error rather than as "Unexpected error: ArgumentException", because it is the
+    /// caller's to fix.
+    /// </summary>
+    [Theory]
+    [InlineData("..", "widgets")]
+    [InlineData("acme", ".")]
+    public async Task ADotSegmentSlugIsAnArgumentErrorRatherThanAnInternalFailure(string workspace, string repository)
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.ListPullRequestsAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                repository,
+                workspace,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("Invalid argument", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("must be real slugs", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unexpected error", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
     }
 
     /// <summary>

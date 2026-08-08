@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 
 using Bitbucket.Mcp.Http;
 using Bitbucket.Mcp.Http.Models;
@@ -582,32 +583,33 @@ public class BitbucketApiClientTests
         Assert.Equal(expectedPath, RequestUrl.Path(Assert.Single(stub.Requests).Uri));
     }
 
-    [Fact]
-    public async Task DotSegmentsInASlugSurviveEscapingAndCollapseThePath()
+    /// <summary>
+    /// <c>.</c> is unreserved, so <see cref="Uri.EscapeDataString(string)"/> leaves a dot segment untouched
+    /// and RFC 3986 dot-segment removal collapses the path when the relative URL is resolved
+    /// against the base address — <c>workspace=".."</c> with <c>slug=".."</c> would otherwise
+    /// request <c>/pullrequests</c>, outside the <c>/2.0/</c> prefix entirely. Escaping cannot fix
+    /// that, so the builder refuses the segment instead.
+    /// </summary>
+    [Theory]
+    [InlineData("..", "..")]
+    [InlineData("..", "widget-api")]
+    [InlineData("acme", ".")]
+    [InlineData(".", "widget-api")]
+    [InlineData("acme", "..")]
+    [InlineData("  ..  ", "widget-api")]
+    public async Task ADotSegmentIsRejectedBeforeAnyRequest(string workspace, string slug)
     {
         using var stub = new StubHttpMessageHandler();
-        stub.EnqueueJson(EmptyPage);
-
         using var client = CreateClient(stub);
 
-        _ = await client.ListPullRequestsAsync(
-            "..",
-            "..",
-            cancellationToken: TestContext.Current.CancellationToken);
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.ListPullRequestsAsync(
+            workspace,
+            slug,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        var request = Assert.Single(stub.Requests);
-
-        // Characterisation of current behaviour, not an endorsement of it. `.` is unreserved, so
-        // Uri.EscapeDataString leaves ".." untouched; RFC 3986 dot-segment removal then applies
-        // when the relative URL is resolved against the base address, and the request walks out of
-        // the /2.0/ prefix altogether. BitbucketCursor guards its URLs with an explicit /2.0/
-        // prefix check; BitbucketRequestBuilder has no equivalent.
-        //
-        // The blast radius is bounded — the host is still api.bitbucket.org, so no credential
-        // reaches a third party — but a model-supplied slug picks the path. Update this test if
-        // the builder learns to reject dot segments.
-        Assert.Equal("/pullrequests", RequestUrl.Path(request.Uri));
-        Assert.Equal("api.bitbucket.org", request.Uri?.Host);
+        // The message is model-facing: it has to say what a slug is, not that a guard tripped.
+        Assert.Contains("must be real slugs", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(stub.Requests);
     }
 
     [Theory]
@@ -626,6 +628,71 @@ public class BitbucketApiClientTests
             workspace!,
             slug!,
             cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Empty(stub.Requests);
+    }
+
+    /// <summary>
+    /// The guard is on the segment, not on <c>listPullRequests</c>: every client method composes
+    /// its URL through the same builder, so none of them can be talked out of the <c>/2.0/</c>
+    /// prefix.
+    /// </summary>
+    [Fact]
+    public async Task EveryEndpointInheritsTheSlugGuard()
+    {
+        using var stub = new StubHttpMessageHandler();
+        using var client = CreateClient(stub);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetPullRequestAsync("..", Repository, 412, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetDiffAsync(Workspace, "..", 412, cancellationToken: cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetDiffStatAsync("..", Repository, 412, cancellationToken: cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetCommentsAsync(Workspace, ".", 412, cancellationToken: cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreatePullRequestAsync(
+            ".",
+            Repository,
+            new CreatePullRequestRequest
+            {
+                Title = "x",
+                Source = new PullRequestEndpointRequest { Branch = new BranchRequest { Name = "feature/x" } },
+            },
+            cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.UpdatePullRequestAsync(
+            Workspace, "..", 412, new UpdatePullRequestRequest { Title = "x" }, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.AddCommentAsync(
+            "..",
+            Repository,
+            412,
+            new CommentRequest { Content = new CommentContentRequest { Raw = "x" } },
+            cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.ApproveAsync(Workspace, "..", 412, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.UnapproveAsync("..", Repository, 412, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.RequestChangesAsync(Workspace, ".", 412, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.UnrequestChangesAsync(".", Repository, 412, cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.MergeAsync("..", Repository, 412, new MergeRequest(), cancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.DeclineAsync(Workspace, "..", 412, cancellationToken: cancellationToken));
 
         Assert.Empty(stub.Requests);
     }
@@ -1068,6 +1135,69 @@ public class BitbucketApiClientTests
         Assert.False(exception.Message.Contains('\n', StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Both documented forms of <c>Retry-After</c> reach the exception as seconds, so the 429 tool
+    /// error can name the wait instead of guessing at it. Ninety seconds is past
+    /// <see cref="RetryHandler.MaxRetryAfter"/>, so the response comes back unretried — which is
+    /// exactly the case where the caller has to be told how long is left.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARetryAfterOnTheFinalResponseTravelsOnTheException(bool asHttpDate)
+    {
+        var time = new ManualTimeProvider();
+
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ =>
+        {
+            var response = StubHttpMessageHandler.CreateResponse(
+                HttpStatusCode.TooManyRequests,
+                """{"type":"error","error":{"message":"Rate limit exceeded"}}""");
+
+            response.Headers.RetryAfter = asHttpDate
+                ? new RetryConditionHeaderValue(time.GetUtcNow() + TimeSpan.FromSeconds(90))
+                : new RetryConditionHeaderValue(TimeSpan.FromSeconds(90));
+
+            return response;
+        });
+
+        using var client = CreateClient(stub, timeProvider: time);
+
+        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+            Workspace,
+            Repository,
+            412,
+            TestContext.Current.CancellationToken));
+
+        Assert.Single(stub.Requests);
+        Assert.Equal(HttpStatusCode.TooManyRequests, exception.StatusCode);
+        Assert.Equal(90, exception.RetryAfterSeconds);
+        Assert.Equal(0, exception.RetryAttempts);
+    }
+
+    [Fact]
+    public async Task AFailureWithoutARetryAfterHeaderReportsNoWait()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Fallback = _ => StubHttpMessageHandler.CreateResponse(
+            HttpStatusCode.TooManyRequests,
+            """{"type":"error","error":{"message":"Rate limit exceeded"}}""");
+
+        using var client = CreateClient(stub);
+
+        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+            Workspace,
+            Repository,
+            412,
+            TestContext.Current.CancellationToken));
+
+        // Null rather than a default: "Bitbucket did not say" and "Bitbucket said zero" are
+        // different pieces of advice.
+        Assert.Null(exception.RetryAfterSeconds);
+        Assert.Equal(RetryHandler.MaxAttempts - 1, exception.RetryAttempts);
+    }
+
     [Fact]
     public async Task AnEmptyBodyOnASuccessIsAFailure()
     {
@@ -1203,10 +1333,11 @@ public class BitbucketApiClientTests
 
     private static BitbucketApiClient CreateClient(
         StubHttpMessageHandler stub,
-        StubCredentialProvider? credentials = null) =>
+        StubCredentialProvider? credentials = null,
+        ManualTimeProvider? timeProvider = null) =>
         new(credentials ?? new StubCredentialProvider(),
             NullLoggerFactory.Instance,
             stub,
             baseAddress: null,
-            timeProvider: new ManualTimeProvider());
+            timeProvider: timeProvider ?? new ManualTimeProvider());
 }
