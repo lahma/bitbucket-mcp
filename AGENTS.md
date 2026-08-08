@@ -75,6 +75,36 @@ SourceLink needs no package reference — it is in-SDK on .NET 8 and later.
 
 _None yet._
 
+## Layout
+
+```
+src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-mcp
+  Program.cs                Entry point — hands argv straight to the CLI dispatcher
+  McpServerSetup.cs         DI wiring, JSON options (D6), tool registration, stdio run loop
+  ServerVersion.cs          Product name + version, read from the assembly (build stamps it)
+  Cli/                      login / logout / status / help (D15). The ONLY place stdout is legal
+  Configuration/            BitbucketMcpOptions.FromEnvironment() — the complete env-var surface
+  Authentication/           ICredentialProvider and both implementations, OAuth token client,
+                            refresh state machine, TokenStore, loopback listener, browser launcher
+  Http/                     BitbucketApiClient, the handler chain (auth + retry), BitbucketCursor
+                            (SSRF-validated), FieldSets, Page<T>, BitbucketApiException
+  Http/Models/              Wire DTOs and BitbucketWireJsonContext (snake_case; never chained
+                            into the MCP JSON options)
+  Diffs/                    UnifiedDiffParser, DiffTruncator, InlineAnchorResolver
+  Tools/                    PullRequestReadTools, PullRequestWriteTools, ToolDefaults, ToolErrors,
+                            ResultMapper, ServerInstructions
+  Tools/Models/             Result records and BitbucketToolJsonContext (camelCase)
+tests/Bitbucket.Mcp.Tests/  The single test project; internals visible via InternalsVisibleTo
+build/                      The Fallout orchestrator (Build.cs, Build.CI.GitHubActions.cs,
+                            ReleaseNotesParser.cs, SemVersion.cs) — `build/` is a resolver
+                            convention, and `.gitignore` must never untrack it
+```
+
+Everything a user can configure is an environment variable read in `Configuration/`; everything a
+user can see is either a tool result shaped in `Tools/Models/` or an error composed in
+`Tools/ToolErrors.cs`. Those three files are where a behaviour change becomes user-visible, so
+they are the ones to keep `README.md` in step with.
+
 ## Build
 
 The orchestrator is [Fallout](https://fallout.build) 10.4.0 (stable channel), the maintained
@@ -90,3 +120,37 @@ hard fork of NUKE. The CLI is pinned in `.config/dotnet-tools.json` as `fallout.
 and passed to the build as the version. The file is never mutated by the build, and the first
 line must parse as a version header (`# 1.0.0`) — do not add a `# Changelog` title, it would
 abort the build.
+
+## Testing
+
+```powershell
+.\build.ps1 Test                                   # the whole suite, via the orchestrator
+dotnet test tests\Bitbucket.Mcp.Tests               # the same tests, without a publish
+dotnet test tests\Bitbucket.Mcp.Tests --filter "FullyQualifiedName~Cursor"
+```
+
+xunit.v3 with the `xunit.runner.visualstudio` VSTest bridge (D11). No mocking or assertion
+libraries: HTTP is faked with the hand-rolled `StubHttpMessageHandler`, and fixtures are embedded
+resources. Because `JsonSerializerIsReflectionEnabledByDefault=false` is set in the test csproj as
+well (D7), a type missing from a `JsonSerializerContext` fails under `dotnet test` rather than
+only after an AOT publish.
+
+Some rules are too easy to break silently to be left to review, so tests enforce them by
+reflection or by scanning the source tree. Do not delete one to make a change pass:
+
+- **Every paginated field set contains `next`.** Any constant in `Http/FieldSets.cs` whose value
+  mentions `values.` is a paginated response, and an inclusive `fields=` list that omits `next`
+  makes Bitbucket return page one with no continuation link — pagination then stops after one
+  page, silently, and only against a repository large enough to have a second one.
+- **The tool inventory matches the design table.** A reflection test walks `[McpServerTool]`
+  methods and asserts the full set of names, and each tool's `ReadOnly` / `Destructive` /
+  `Idempotent` / `OpenWorld` flags, against the table in this file — plus a `[Description]` on
+  every tool method and every non-injected parameter. `Destructive` defaults to *true* in the SDK,
+  so a new non-destructive write tool fails this test until it says so explicitly.
+- **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
+  outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
+
+`SmokeTest` is the end-to-end check the unit tests cannot be: it publishes the Native AOT binary,
+spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
+over stdio, asserting `serverInfo.name` and all ten tool names. CI runs `Test` and `SmokeTest` on
+every push and pull request.
