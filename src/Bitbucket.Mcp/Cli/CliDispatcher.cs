@@ -1,3 +1,5 @@
+using Bitbucket.Mcp.Configuration;
+
 namespace Bitbucket.Mcp.Cli;
 
 /// <summary>
@@ -32,6 +34,20 @@ internal static class CliDispatcher
          Options:
            -h, --help                     Show this help text.
            -v, --version                  Show the version.
+
+         Configuration is environment variables only. The ones authentication needs:
+           BITBUCKET_ACCESS_TOKEN         Bearer token; highest precedence, bypasses OAuth.
+           BITBUCKET_EMAIL                With BITBUCKET_API_TOKEN, an Atlassian API token (Basic).
+           BITBUCKET_API_TOKEN
+           BITBUCKET_OAUTH_KEY            OAuth consumer key and secret for the browser flow.
+           BITBUCKET_OAUTH_SECRET
+           BITBUCKET_OAUTH_CALLBACK_HOST  Callback URL the consumer is registered with
+           BITBUCKET_OAUTH_CALLBACK_PORT    (default http://127.0.0.1:33418/callback).
+           BITBUCKET_MCP_TOKEN_FILE       Override the token cache location.
+           BITBUCKET_MCP_NO_BROWSER       Set to 1 to never launch a browser.
+
+         Run `{ServerVersion.Name} status` to see which of these are in effect; the README documents
+         the full set.
          """;
 
     /// <summary>Dispatches <paramref name="args"/> and returns the process exit code.</summary>
@@ -57,11 +73,16 @@ internal static class CliDispatcher
                 Console.Out.WriteLine(UsageText);
                 return ExitSuccess;
 
+            // The three CLI modes (D15). Each reads the environment itself, exactly as the server
+            // does, so that what `status` reports is what `serve` would use.
             case "login":
+                return await LoginCommand.RunAsync(BitbucketMcpOptions.FromEnvironment()).ConfigureAwait(false);
+
             case "logout":
+                return await LogoutCommand.RunAsync(BitbucketMcpOptions.FromEnvironment()).ConfigureAwait(false);
+
             case "status":
-                Console.Error.WriteLine($"{ServerVersion.Name}: '{command}' is not implemented yet (coming in a later task).");
-                return ExitFailure;
+                return await StatusCommand.RunAsync(BitbucketMcpOptions.FromEnvironment()).ConfigureAwait(false);
 
             default:
                 Console.Error.WriteLine($"{ServerVersion.Name}: unknown argument '{command}'.");

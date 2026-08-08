@@ -67,9 +67,12 @@ internal static class McpServerSetup
             sp.GetRequiredService<ILoggerFactory>(),
             sp.GetRequiredService<TimeProvider>()));
 
-        // T9 replaces this with the loopback listener plus browser launcher. Until then an
-        // interactive sign-in reports that it is impossible instead of hanging.
-        services.AddSingleton<IInteractiveAuthenticator>(NullInteractiveAuthenticator.Instance);
+        // The browser flow: loopback listener plus browser launcher. Constructing it binds no
+        // socket and launches nothing - that happens inside AuthorizeAsync, which only the refresh
+        // state machine calls, and only after every non-interactive option has been exhausted.
+        services.AddSingleton<IInteractiveAuthenticator>(sp => new InteractiveAuthenticator(
+            sp.GetRequiredService<BitbucketMcpOptions>(),
+            sp.GetRequiredService<ILoggerFactory>()));
 
         services.AddSingleton(CredentialProviderFactory.Create);
         services.AddSingleton(sp => new BitbucketApiClient(
