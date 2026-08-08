@@ -1,0 +1,92 @@
+# AGENTS.md
+
+Guidance for humans and AI agents working in this repository. `CLAUDE.md` imports this file,
+so keep it the single source of truth.
+
+`bitbucket-mcp` is a Model Context Protocol server for **Bitbucket Cloud** (REST API 2.0),
+written in C# on .NET 10 and published as a Native AOT single binary per RID. Bitbucket Data
+Center is explicitly out of scope. The point of the project is a dependency tree small enough
+for one person to audit — treat that as a hard constraint, not a preference.
+
+## Hard rules
+
+1. **No new NuGet packages without a decision recorded in this file.** The package budget below
+   is complete. If a package looks necessary, add a row to *Package budget changes* with the
+   date, the package, and why nothing already present can do the job — before referencing it.
+2. **Never hand-edit `.github/workflows/build.yml`.** It is generated from the `[GitHubActions]`
+   attribute in `build/Build.CI.GitHubActions.cs` and regenerating overwrites edits. Change the
+   attribute and re-run the build. (`.github/workflows/release.yml` is hand-written by design —
+   the generator has no matrix support — and *is* edited directly.)
+3. **No `Console.Write*` outside `src/Bitbucket.Mcp/Cli/`.** In server mode stdout *is* the MCP
+   protocol channel; a stray write corrupts the JSON-RPC stream. Logging goes to stderr
+   (`AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace)`). Only the CLI modes
+   (`login` / `logout` / `status`), which never speak the protocol, may write to stdout. A test
+   enforces this.
+4. **Diffstat first.** Never fetch a whole PR diff speculatively: call `getPullRequestDiff` with
+   `mode="diffstat"`, then request specific files via `paths=[...]`. Bitbucket returns **555** on
+   large diffs (~8k lines / 200 files) and a full diff burns the model's context either way.
+   Truncation must always be visible, with continuation guidance — never silent.
+5. **`.gitignore` must never contain a bare `build` rule.** The Fallout build project lives in
+   `build/`; a stock Visual Studio .gitignore silently untracks the entire orchestrator.
+6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
+   the compiler and analyzers are the lint step.
+
+## Design decisions (D1–D15)
+
+| # | Decision |
+|---|---|
+| D1 | **One production project** `src/Bitbucket.Mcp` (Exe) + one test project. Testability via `InternalsVisibleTo`. |
+| D2 | Binary `bitbucket-mcp` (`AssemblyName`), `RootNamespace Bitbucket.Mcp`. |
+| D3 | **Bare `ServiceCollection`**, not `Host.CreateApplicationBuilder` — the SDK registers `McpServer` as a singleton; `provider.GetRequiredService<McpServer>().RunAsync()` (this is the SDK's own AOT test app shape). Drops config providers/metrics/lifetime from cold start. `PosixSignalRegistration` for SIGINT/SIGTERM. |
+| D4 | **Hand-rolled retry `DelegatingHandler`** (~90 lines) — `Microsoft.Extensions.Http.Resilience` would pull in Polly (third-party) plus six more packages. |
+| D5 | No `IHttpClientFactory` — one singleton `HttpClient` over a hand-built handler chain. |
+| D6 | Our `JsonSerializerContext` goes **first** in `TypeInfoResolverChain`, the SDK resolver second (first-match-wins; ours-first guarantees identical JIT and AOT behavior). |
+| D7 | `JsonSerializerIsReflectionEnabledByDefault=false` in the server **and** the test csproj — a missing `[JsonSerializable]` then fails in `dotnet test`, not only after an AOT publish. |
+| D8 | **Static tool methods**; `BitbucketApiClient` as a plain parameter (DI-bound via `IServiceProviderIsService`, excluded from the schema); avoids per-call instance activation and is directly unit-testable. |
+| D9 | No `RuntimeIdentifiers` in the csproj (would pull ILCompiler packs per RID on every restore); the RID list lives in `Build.cs` and the release matrix, and reaches publish via `-r`. |
+| D10 | No `PublishSingleFile` (ignored under AOT). |
+| D11 | **xunit.v3 + `xunit.runner.visualstudio` + `Microsoft.NET.Test.Sdk`** (VSTest bridge) so the stock Fallout `ITest` component works unmodified. Fallback if it breaks: a custom Test target with `--report-trx`. |
+| D12 | OAuth loopback callback via a raw **`TcpListener`** bound to both `127.0.0.1` and `::1` (~60 auditable lines, no `HttpListener` platform quirks). |
+| D13 | **Confidential OAuth client** (key + secret, Basic auth at the token endpoint), no PKCE (unconfirmed for Bitbucket Cloud; leave an internal hook). The user creates their own consumer. |
+| D14 | Access-token lifetime always taken from `expires_in` (minus 60 s skew) — never hard-coded; Atlassian's docs contradict themselves (1 h vs 2 h). |
+| D15 | **`login` / `logout` / `status` CLI modes** on the same binary (argv dispatch, hand-rolled parsing); no args = stdio server. CLI mode may use stdout; server mode never. |
+
+Other locked choices worth restating: Bitbucket **app passwords are dead** (removed 2026-07-28) —
+never implement them. Tool names are **camelCase verbNoun** (`createPullRequest`) via
+`[McpServerTool(Name = ...)]`. `Destructive` defaults to **true** in the SDK, so non-destructive
+writes must set it explicitly `false`. Never call `WithToolsFromAssembly()` (IL2026) — one
+`WithTools<T>(jsonOptions)` per tool class.
+
+## Package budget
+
+Complete, as of the initial implementation. Versions are centrally pinned in
+`Directory.Packages.props`.
+
+- `src/Bitbucket.Mcp`: `ModelContextProtocol` (pinned exactly `[2.1.0]`),
+  `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console`,
+  `System.Security.Cryptography.ProtectedData` (DPAPI; Windows-only code path).
+- `tests/`: `xunit.v3`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk`. No mocking or
+  assertion libraries — use the hand-rolled `StubHttpMessageHandler`.
+- `build/`: `Fallout.Common` + `Fallout.Components` 10.4.0 (the build project opts out of CPM).
+
+SourceLink needs no package reference — it is in-SDK on .NET 8 and later.
+
+### Package budget changes
+
+_None yet._
+
+## Build
+
+The orchestrator is [Fallout](https://fallout.build) 10.4.0 (stable channel), the maintained
+hard fork of NUKE. The CLI is pinned in `.config/dotnet-tools.json` as `fallout.globaltool`
+(command `fallout`) and resolves `build/_build.csproj` by convention.
+
+```powershell
+.\build.ps1 Test          # restore, compile, run tests
+.\build.ps1 SmokeTest     # AOT publish + real stdio JSON-RPC handshake against the binary
+```
+
+`CHANGELOG.md` is the **version authority**: its top section is parsed in `OnBuildInitialized`
+and passed to the build as the version. The file is never mutated by the build, and the first
+line must parse as a version header (`# 1.0.0`) — do not add a `# Changelog` title, it would
+abort the build.
