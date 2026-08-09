@@ -92,6 +92,16 @@ internal sealed class BitbucketRequestBuilder
     }
 
     /// <summary>
+    /// Appends a wide numeric path segment. Comment and task ids are allocated globally rather than
+    /// per repository, so they are <see cref="long"/> everywhere they appear.
+    /// </summary>
+    internal BitbucketRequestBuilder Segment(long value)
+    {
+        _path.Append('/').Append(value.ToString(CultureInfo.InvariantCulture));
+        return this;
+    }
+
+    /// <summary>
     /// Appends <c>name=value</c>, or nothing at all when the value is absent — "unset" and "set to
     /// the empty string" are different requests to Bitbucket, and callers always mean the former.
     /// </summary>

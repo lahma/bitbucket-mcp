@@ -26,10 +26,12 @@ for one person to audit — treat that as a hard constraint, not a preference.
    (`AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace)`). Only the CLI modes
    (`login` / `logout` / `status`), which never speak the protocol, may write to stdout. A test
    enforces this.
-4. **Diffstat first.** Never fetch a whole PR diff speculatively: call `getPullRequestDiff` with
-   `mode="diffstat"`, then request specific files via `paths=[...]`. Bitbucket returns **555** on
-   large diffs (~8k lines / 200 files) and a full diff burns the model's context either way.
-   Truncation must always be visible, with continuation guidance — never silent.
+4. **Diffstat first.** Never fetch a whole PR diff speculatively: call `getPullRequestDiff` with no
+   `paths` to list the changed files, then again with `paths=[...]` for the ones worth reading —
+   supplying `paths` is itself what selects the diff, so `mode` never has to be named, and naming
+   `mode="diffstat"` alongside `paths` is refused rather than silently ignored. Bitbucket returns
+   **555** on large diffs (~8k lines / 200 files) and a full diff burns the model's context either
+   way. Truncation must always be visible, with continuation guidance — never silent.
 5. **`.gitignore` must never contain a bare `build` rule.** The Fallout build project lives in
    `build/`; a stock Visual Studio .gitignore silently untracks the entire orchestrator.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
@@ -62,6 +64,49 @@ never implement them. Tool names are **camelCase verbNoun** (`createPullRequest`
 `[McpServerTool(Name = ...)]`. `Destructive` defaults to **true** in the SDK, so non-destructive
 writes must set it explicitly `false`. Never call `WithToolsFromAssembly()` (IL2026) — one
 `WithTools<T>(jsonOptions)` per tool class.
+
+## Tool table
+
+The design's tool inventory, in full. `ToolInventoryTests` asserts this set of names and every one
+of these four flags against what an MCP client actually receives, and `Build.cs`'s
+`ExpectedToolNames` asserts the names again over a real `tools/list`. **Adding a tool means editing
+this table, that test and that array** — all three, or the build fails.
+
+`Destructive` is blank on the read tools deliberately: `ReadOnly` already says they change nothing,
+so the SDK omits the hint and the test asserts its *absence*. On a write tool it is never blank —
+the SDK's default is `true`, so a non-destructive write that stays silent tells clients to prompt
+before every comment.
+
+| Tool | Class | ReadOnly | Destructive | Idempotent | OpenWorld |
+|---|---|---|---|---|---|
+| `listPullRequests` | read | true | — | true | true |
+| `getPullRequest` | read | true | — | true | true |
+| `getPullRequestDiff` | read | true | — | true | true |
+| `getPullRequestComments` | read | true | — | true | true |
+| `listDefaultReviewers` | read | true | — | true | true |
+| `listPullRequestStatuses` | read | true | — | true | true |
+| `listPullRequestTasks` | read | true | — | true | true |
+| `createPullRequest` | write | false | **false** | false | true |
+| `updatePullRequest` | write | false | true | false | true |
+| `addPullRequestComment` | write | false | **false** | false | true |
+| `resolvePullRequestComment` | write | false | **false** | true | true |
+| `addPullRequestTask` | write | false | **false** | false | true |
+| `updatePullRequestTask` | write | false | **false** | true | true |
+| `setPullRequestReviewStatus` | write | false | **false** | true | true |
+| `mergePullRequest` | write | false | true | false | true |
+| `declinePullRequest` | write | false | true | false | true |
+
+Two of those rows are judgement calls rather than readings of the API:
+
+- **`updatePullRequestTask` is non-destructive** even though its `content` argument overwrites a
+  task's text irrecoverably — which is exactly why `updatePullRequest` is destructive. The common
+  call by a wide margin is the state flip (ticking a task off), and a confirmation prompt in front
+  of every tick teaches a user to click through the prompts that matter. The description says the
+  text is replaced.
+- **`resolvePullRequestComment` is idempotent**, which it only is because the tool makes it so:
+  Bitbucket answers `409` to resolving an already-resolved thread and `404` to reopening one that
+  was never resolved, and both are swallowed because the caller asked for an end state and it is
+  already in place. The same shape as `setPullRequestReviewStatus`'s `UNAPPROVED`.
 
 ## Package budget
 
@@ -165,9 +210,11 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   page, silently, and only against a repository large enough to have a second one.
 - **The tool inventory matches the design table.** A reflection test walks `[McpServerTool]`
   methods and asserts the full set of names, and each tool's `ReadOnly` / `Destructive` /
-  `Idempotent` / `OpenWorld` flags, against the table in this file — plus a `[Description]` on
-  every tool method and every non-injected parameter. `Destructive` defaults to *true* in the SDK,
-  so a new non-destructive write tool fails this test until it says so explicitly.
+  `Idempotent` / `OpenWorld` flags, against *Tool table* above — plus a `[Description]` on every
+  tool method and every non-injected parameter. `Destructive` defaults to *true* in the SDK, so a
+  new non-destructive write tool fails this test until it says so explicitly. A new tool has to be
+  added in three places: that table, `ToolInventoryTests.ExpectedToolNames`, and `Build.cs`'s
+  `ExpectedToolNames` (which `SmokeTest` checks against a live `tools/list`).
 - **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
   outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
 - **`.mcp/server.json` agrees with the version authority.** `McpServerManifestTests` reads the
@@ -179,8 +226,8 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
 
 `SmokeTest` is the end-to-end check the unit tests cannot be: it publishes the Native AOT binary,
 spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
-over stdio, asserting `serverInfo.name` and all ten tool names. CI runs `Test` and `SmokeTest` on
-every push and pull request.
+over stdio, asserting `serverInfo.name` and all sixteen tool names. CI runs `Test` and `SmokeTest`
+on every push and pull request.
 
 ## Release engineering
 

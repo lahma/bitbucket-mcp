@@ -2,11 +2,33 @@
 
 Initial release.
 
-- Ten Bitbucket Cloud pull-request tools over MCP stdio: `listPullRequests`, `getPullRequest`,
-  `getPullRequestDiff`, `getPullRequestComments`, `createPullRequest`, `updatePullRequest`,
-  `addPullRequestComment`, `setPullRequestReviewStatus`, `mergePullRequest`, `declinePullRequest`.
+- Sixteen Bitbucket Cloud pull-request tools over MCP stdio: `listPullRequests`, `getPullRequest`,
+  `getPullRequestDiff`, `getPullRequestComments`, `listDefaultReviewers`,
+  `listPullRequestStatuses`, `listPullRequestTasks`, `createPullRequest`, `updatePullRequest`,
+  `addPullRequestComment`, `resolvePullRequestComment`, `addPullRequestTask`,
+  `updatePullRequestTask`, `setPullRequestReviewStatus`, `mergePullRequest`, `declinePullRequest`.
   Every tool carries explicit read-only / destructive / idempotent annotations and returns
   structured content.
+- `listDefaultReviewers` reads the repository's effective default reviewers — its own plus the ones
+  inherited from its project — so a reviewer's account UUID is obtainable on a repository that has
+  never had a pull request. `createPullRequest` and `updatePullRequest` point at it.
+- `listPullRequestStatuses` reports every build, deployment and external check with its state and
+  URL: the merge-readiness question, answerable before `mergePullRequest` rather than after.
+- Pull request tasks, the tracked half of a review: `listPullRequestTasks`, `addPullRequestTask`
+  (optionally hung off a comment) and `updatePullRequestTask` to tick one off or reopen it. A
+  state-only update is one request; if Bitbucket rejects it for a missing field, the task's own
+  text is fetched and resent with the new state rather than the call failing.
+- `resolvePullRequestComment` marks an inline comment thread resolved or reopens it, and is
+  genuinely idempotent: Bitbucket's `409` for an already-resolved thread and `404` for reopening an
+  open one are both the requested end state, and are treated as such.
+- Every pull request and comment result now carries `url`, the bitbucket.org page — the one link a
+  model cannot derive and the one a human asks for.
+- `listPullRequests` takes `sourceBranch`, composing a `source.branch.name` filter alongside the
+  state and author ones. A branch name containing a double quote or backslash is refused rather
+  than escaped, because Bitbucket's query language documents no escape sequence at all.
+- `getPullRequestDiff` reads `paths` as the request for a diff: supplying it selects `mode="diff"`
+  instead of being ignored in the default listing mode, and `mode="diffstat"` alongside it is
+  refused as the contradiction it is.
 - OAuth 2.0 browser flow as the primary authentication, with a `login` / `logout` / `status` CLI on
   the same binary. Tokens are cached per user, DPAPI-encrypted on Windows and `0600` elsewhere, and
   refreshed silently — including Bitbucket's single-use refresh-token rotation, serialised across

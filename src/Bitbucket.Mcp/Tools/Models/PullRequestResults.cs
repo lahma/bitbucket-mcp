@@ -70,6 +70,9 @@ internal sealed record PullRequestSummary
 
     /// <summary>Number of open tasks.</summary>
     public int? TaskCount { get; init; }
+
+    /// <summary>The pull request's page on bitbucket.org — the link to hand a human.</summary>
+    public string? Url { get; init; }
 }
 
 /// <summary>One page of pull requests.</summary>
@@ -147,4 +150,7 @@ internal sealed record PullRequestDetail
 
     /// <summary>Everyone involved and their stance — the only place approvals are visible.</summary>
     public IReadOnlyList<ParticipantSummary>? Participants { get; init; }
+
+    /// <summary>The pull request's page on bitbucket.org — the link to hand a human.</summary>
+    public string? Url { get; init; }
 }

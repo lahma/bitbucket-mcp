@@ -32,6 +32,9 @@ internal sealed record CommentSummary
 
     /// <summary>Whether the thread has been marked resolved.</summary>
     public bool Resolved { get; init; }
+
+    /// <summary>The comment's anchor on bitbucket.org — the link to hand a human.</summary>
+    public string? Url { get; init; }
 }
 
 /// <summary>One page of a pull request's comments, with deleted ones filtered out.</summary>
@@ -80,4 +83,31 @@ internal sealed record CommentResult
 
     /// <summary>The comment this one replies to, when it is a reply.</summary>
     public long? ParentId { get; init; }
+
+    /// <summary>The comment's anchor on bitbucket.org — the link to hand a human.</summary>
+    public string? Url { get; init; }
+}
+
+/// <summary>
+/// A comment thread's resolution state after <c>resolvePullRequestComment</c>.
+/// </summary>
+/// <remarks>
+/// Reopening answers <c>204</c> with no body, and resolving an already-resolved thread answers
+/// <c>409</c>, so <see cref="Resolved"/> is the state that was asked for and reached — not
+/// necessarily one Bitbucket echoed back. <see cref="ResolvedBy"/> and <see cref="ResolvedOn"/> are
+/// present only when it did.
+/// </remarks>
+internal sealed record CommentResolutionResult
+{
+    /// <summary>The comment whose thread this is.</summary>
+    public long CommentId { get; init; }
+
+    /// <summary>Whether the thread is now resolved.</summary>
+    public bool Resolved { get; init; }
+
+    /// <summary>Who resolved it, when Bitbucket reported it back.</summary>
+    public UserSummary? ResolvedBy { get; init; }
+
+    /// <summary>When it was resolved, when Bitbucket reported it back.</summary>
+    public DateTimeOffset? ResolvedOn { get; init; }
 }

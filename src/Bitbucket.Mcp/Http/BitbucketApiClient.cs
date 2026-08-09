@@ -152,6 +152,10 @@ internal sealed class BitbucketApiClient : IDisposable
     /// Restricts to one author. A value in Bitbucket's braced UUID form is matched against
     /// <c>author.uuid</c>; anything else against <c>author.nickname</c>.
     /// </param>
+    /// <param name="sourceBranch">
+    /// Restricts to pull requests opened from one branch, matched against <c>source.branch.name</c>.
+    /// The name is quoted and escaped like any other literal.
+    /// </param>
     /// <param name="query">An extra BBQL fragment, combined with the rest using <c>AND</c>.</param>
     /// <param name="sort">A sort field, for example <c>-updated_on</c>.</param>
     /// <param name="pageSize">Items per page; clamped to 1–100.</param>
@@ -166,6 +170,7 @@ internal sealed class BitbucketApiClient : IDisposable
         string repositorySlug,
         IReadOnlyList<string>? states = null,
         string? author = null,
+        string? sourceBranch = null,
         string? query = null,
         string? sort = null,
         int? pageSize = null,
@@ -177,7 +182,7 @@ internal sealed class BitbucketApiClient : IDisposable
             : BitbucketRequestBuilder.Repository(workspace, repositorySlug)
                 .Segment("pullrequests")
                 .Query("fields", FieldSets.PullRequestList)
-                .Query("q", BuildPullRequestQuery(states, author, query))
+                .Query("q", BuildPullRequestQuery(states, author, sourceBranch, query))
                 .Query("sort", sort)
                 .Query("pagelen", ClampPageSize(pageSize))
                 .Build();
@@ -369,6 +374,193 @@ internal sealed class BitbucketApiClient : IDisposable
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Marks a comment thread resolved as the authenticated user.
+    /// </summary>
+    /// <remarks>
+    /// Bitbucket answers with the resolution record — <c>user</c> and <c>created_on</c> — not with
+    /// the comment. It answers <c>409</c> when the thread is already resolved, and <c>403</c> when
+    /// the comment is not a top-level comment on the diff, which is the only kind that has a thread
+    /// to resolve.
+    /// </remarks>
+    internal async Task<CommentResolutionDto> ResolveCommentAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long commentId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = Comment(workspace, repositorySlug, pullRequestId, commentId)
+            .Segment("resolve")
+            .Query("fields", FieldSets.CommentResolution)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.CommentResolutionDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reopens a resolved comment thread. Answers <c>204</c> with no body, and <c>404</c> when the
+    /// thread was not resolved in the first place.
+    /// </summary>
+    internal async Task UnresolveCommentAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long commentId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = Comment(workspace, repositorySlug, pullRequestId, commentId)
+            .Segment("resolve")
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+
+        await SendNoContentAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists the repository's effective default reviewers — its own, plus the ones inherited from
+    /// its project.
+    /// </summary>
+    /// <remarks>
+    /// The <c>effective-</c> variant, not plain <c>default-reviewers</c>, because a repository in a
+    /// project that configures reviewers centrally has none of its own and the plain endpoint then
+    /// answers with an empty list. Each entry is a wrapper carrying the account and where the rule
+    /// came from.
+    /// </remarks>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<DefaultReviewerDto>> ListDefaultReviewersAsync(
+        string workspace,
+        string repositorySlug,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? DecodeCursor(cursor)
+            : BitbucketRequestBuilder.Repository(workspace, repositorySlug)
+                .Segment("effective-default-reviewers")
+                .Query("fields", FieldSets.DefaultReviewers)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.DefaultReviewerPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Lists the build statuses reported against a pull request's commits.</summary>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<CommitStatusDto>> ListStatusesAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? DecodeCursor(cursor)
+            : PullRequest(workspace, repositorySlug, pullRequestId)
+                .Segment("statuses")
+                .Query("fields", FieldSets.CommitStatuses)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.CommitStatusPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Lists a pull request's tasks.</summary>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<TaskDto>> ListTasksAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? DecodeCursor(cursor)
+            : PullRequest(workspace, repositorySlug, pullRequestId)
+                .Segment("tasks")
+                .Query("fields", FieldSets.Tasks)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.TaskPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Fetches one task.</summary>
+    internal async Task<TaskDto> GetTaskAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = PullRequestTask(workspace, repositorySlug, pullRequestId, taskId)
+            .Query("fields", FieldSets.Task)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.TaskDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Creates a task, optionally attached to a comment.</summary>
+    internal async Task<TaskDto> CreateTaskAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        CreateTaskRequest body,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var url = PullRequest(workspace, repositorySlug, pullRequestId)
+            .Segment("tasks")
+            .Query("fields", FieldSets.Task)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonBody(body, BitbucketWireJsonContext.Default.CreateTaskRequest),
+        };
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.TaskDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Updates a task's state, its text, or both.</summary>
+    internal async Task<TaskDto> UpdateTaskAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long taskId,
+        UpdateTaskRequest body,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var url = PullRequestTask(workspace, repositorySlug, pullRequestId, taskId)
+            .Query("fields", FieldSets.Task)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonBody(body, BitbucketWireJsonContext.Default.UpdateTaskRequest),
+        };
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.TaskDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>Approves the pull request as the authenticated user.</summary>
     /// <returns>The caller's own participant entry, which is what this endpoint answers with.</returns>
     internal Task<ParticipantDto> ApproveAsync(
@@ -501,6 +693,24 @@ internal sealed class BitbucketApiClient : IDisposable
             .Segment("pullrequests")
             .Segment(pullRequestId);
 
+    private static BitbucketRequestBuilder Comment(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long commentId) =>
+        PullRequest(workspace, repositorySlug, pullRequestId)
+            .Segment("comments")
+            .Segment(commentId);
+
+    private static BitbucketRequestBuilder PullRequestTask(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long taskId) =>
+        PullRequest(workspace, repositorySlug, pullRequestId)
+            .Segment("tasks")
+            .Segment(taskId);
+
     private async Task<ParticipantDto> PostReviewStateAsync(
         string workspace,
         string repositorySlug,
@@ -542,9 +752,13 @@ internal sealed class BitbucketApiClient : IDisposable
     /// <paramref name="extra"/> is the caller's own fragment and is parenthesised so that its
     /// operator precedence cannot silently rearrange the rest.
     /// </summary>
-    private static string? BuildPullRequestQuery(IReadOnlyList<string>? states, string? author, string? extra)
+    private static string? BuildPullRequestQuery(
+        IReadOnlyList<string>? states,
+        string? author,
+        string? sourceBranch,
+        string? extra)
     {
-        var clauses = new List<string>(3);
+        var clauses = new List<string>(4);
 
         if (states is not null)
         {
@@ -576,6 +790,13 @@ internal sealed class BitbucketApiClient : IDisposable
             // taken as a nickname, which is the only other identifier BBQL exposes here.
             var field = trimmed.StartsWith('{') ? "author.uuid" : "author.nickname";
             clauses.Add($"{field} = {Quote(trimmed)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceBranch))
+        {
+            // The branch name only, with no refs/heads/ prefix — the same spelling the pull
+            // request's own source.branch.name carries.
+            clauses.Add($"source.branch.name = {Quote(sourceBranch.Trim())}");
         }
 
         if (!string.IsNullOrWhiteSpace(extra))

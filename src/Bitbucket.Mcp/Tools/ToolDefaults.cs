@@ -10,7 +10,7 @@ namespace Bitbucket.Mcp.Tools;
 /// The limits and shared argument handling every tool applies before it touches the API.
 /// </summary>
 /// <remarks>
-/// Validation lives here rather than in each tool so that ten tools cannot drift into ten
+/// Validation lives here rather than in each tool so that sixteen tools cannot drift into sixteen
 /// different opinions about what a page size or a missing workspace means. Everything thrown from
 /// this class is already an <see cref="McpException"/>: these are the caller's mistakes, and the
 /// message is the fix.
@@ -38,9 +38,15 @@ internal static class ToolDefaults
     /// <summary>The <c>diff</c> mode of <c>getPullRequestDiff</c>.</summary>
     internal const string DiffModeDiff = "diff";
 
+    /// <summary>The ref prefix Bitbucket never stores on a branch name, stripped where one appears.</summary>
+    private const string RefsHeadsPrefix = "refs/heads/";
+
     /// <summary>The states <c>listPullRequests</c> can filter on, plus the <c>ALL</c> escape.</summary>
     private static readonly string[] PullRequestStates =
         ["OPEN", "MERGED", "DECLINED", "SUPERSEDED", "ALL"];
+
+    /// <summary>The two states a pull request task can be in.</summary>
+    private static readonly string[] TaskStates = ["RESOLVED", "UNRESOLVED"];
 
     /// <summary>The merge strategies Bitbucket Cloud accepts.</summary>
     private static readonly string[] MergeStrategies =
@@ -131,13 +137,21 @@ internal static class ToolDefaults
         return string.Equals(normalized, "ALL", StringComparison.Ordinal) ? null : [normalized];
     }
 
-    /// <summary>Validates the <c>mode</c> parameter of <c>getPullRequestDiff</c>.</summary>
+    /// <summary>
+    /// Validates the <c>mode</c> parameter of <c>getPullRequestDiff</c>, keeping "unspecified"
+    /// distinguishable from an explicit choice.
+    /// </summary>
+    /// <returns>
+    /// The normalised mode, or <see langword="null"/> when the caller did not name one — which is
+    /// what lets <c>paths</c> imply <see cref="DiffModeDiff"/> while an explicit
+    /// <see cref="DiffModeDiffStat"/> alongside it stays a conflict rather than a silent override.
+    /// </returns>
     /// <exception cref="McpException"><paramref name="mode"/> is neither mode.</exception>
-    internal static string ResolveDiffMode(string? mode)
+    internal static string? ResolveDiffMode(string? mode)
     {
         if (string.IsNullOrWhiteSpace(mode))
         {
-            return DiffModeDiffStat;
+            return null;
         }
 
         var normalized = mode.Trim().ToLowerInvariant();
@@ -149,6 +163,87 @@ internal static class ToolDefaults
                 $"mode must be \"{DiffModeDiffStat}\" (list the changed files) or \"{DiffModeDiff}\" " +
                 $"(fetch file contents); got '{mode}'."),
         };
+    }
+
+    /// <summary>
+    /// Normalises the <c>sourceBranch</c> filter of <c>listPullRequests</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The value becomes a BBQL string literal (<c>source.branch.name = "…"</c>). BBQL delimits
+    /// strings with <c>"</c> and <b>documents no escape sequence at all</b> — verified 2026-08-09
+    /// against Atlassian's "Filter and sort API objects" page and the published OpenAPI document,
+    /// neither of which mentions escaping or backslashes anywhere, and the anonymous endpoints that
+    /// would let the parser be probed now answer <c>410</c>. A quote inside the value is therefore
+    /// query injection with no documented defence, so it is refused here rather than escaped on a
+    /// guess. A backslash goes with it: if BBQL does turn out to escape, a trailing backslash would
+    /// swallow the closing quote.
+    /// </para>
+    /// <para>
+    /// (<c>BitbucketApiClient.Quote</c> still escapes both, as the defence that does not depend on
+    /// every caller remembering this one.)
+    /// </para>
+    /// <para>
+    /// A leading <c>refs/heads/</c> is stripped rather than refused: Bitbucket stores the short
+    /// name, so a fully-qualified ref would match nothing — silently, which is the worst possible
+    /// answer to "does this branch already have a pull request?".
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="null"/> when the caller did not filter by branch.</returns>
+    /// <exception cref="McpException">The value cannot be expressed as a BBQL literal.</exception>
+    internal static string? ResolveBranchFilter(string? sourceBranch)
+    {
+        if (string.IsNullOrWhiteSpace(sourceBranch))
+        {
+            return null;
+        }
+
+        var trimmed = sourceBranch.Trim();
+
+        if (trimmed.StartsWith(RefsHeadsPrefix, StringComparison.Ordinal))
+        {
+            trimmed = trimmed[RefsHeadsPrefix.Length..];
+        }
+
+        if (trimmed.Length == 0)
+        {
+            throw new McpException(
+                "sourceBranch is a branch name, not a ref: pass \"feature/clamp\", not " +
+                "\"refs/heads/\" on its own. Omit it to list every pull request.");
+        }
+
+        if (trimmed.AsSpan().IndexOfAny('"', '\\') >= 0)
+        {
+            throw new McpException(
+                $"sourceBranch cannot contain a double quote or a backslash; got '{trimmed}'. Bitbucket's " +
+                "query language delimits strings with double quotes and documents no way to escape one, so " +
+                "such a branch cannot be filtered on safely. List the pull requests without sourceBranch and " +
+                "match the branch in the results instead.");
+        }
+
+        return trimmed;
+    }
+
+    /// <summary>Validates the <c>state</c> parameter of <c>updatePullRequestTask</c>.</summary>
+    /// <returns><see langword="null"/> when unset, which leaves the task's state alone.</returns>
+    /// <exception cref="McpException"><paramref name="state"/> is not one of the two task states.</exception>
+    internal static string? ResolveTaskState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state))
+        {
+            return null;
+        }
+
+        var normalized = state.Trim().ToUpperInvariant();
+
+        if (!TaskStates.Contains(normalized, StringComparer.Ordinal))
+        {
+            throw new McpException(
+                $"state must be {string.Join(" or ", TaskStates)}; got '{state}'. RESOLVED ticks the task " +
+                "off, UNRESOLVED reopens it.");
+        }
+
+        return normalized;
     }
 
     /// <summary>Validates the <c>mergeStrategy</c> parameter.</summary>

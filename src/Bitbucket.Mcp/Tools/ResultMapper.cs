@@ -54,6 +54,7 @@ internal static class ResultMapper
             UpdatedOn = dto.UpdatedOn,
             CommentCount = dto.CommentCount,
             TaskCount = dto.TaskCount,
+            Url = dto.Links?.Html?.Href,
         };
     }
 
@@ -104,6 +105,7 @@ internal static class ResultMapper
             ClosedBy = User(dto.ClosedBy),
             Reviewers = Reviewers(dto.Reviewers, dto.Participants),
             Participants = participants,
+            Url = dto.Links?.Html?.Href,
         };
     }
 
@@ -290,6 +292,7 @@ internal static class ResultMapper
                 Line = comment.Inline?.To ?? comment.Inline?.From,
                 ParentId = comment.Parent?.Id,
                 Resolved = comment.Resolution is not null,
+                Url = comment.Links?.Html?.Href,
             });
         }
 
@@ -316,6 +319,104 @@ internal static class ResultMapper
             LineType = anchor is null ? null : LineType(anchor.LineType),
             MatchedText = anchor?.MatchedText,
             ParentId = dto.Parent?.Id,
+            Url = dto.Links?.Html?.Href,
+        };
+    }
+
+    /// <summary>Maps one page of effective default reviewers, dropping entries with nobody in them.</summary>
+    internal static DefaultReviewerListResult DefaultReviewers(Page<DefaultReviewerDto> page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+
+        var reviewers = new List<DefaultReviewerSummary>(page.Items.Count);
+
+        foreach (var entry in page.Items)
+        {
+            if (entry.User is null)
+            {
+                continue;
+            }
+
+            reviewers.Add(new DefaultReviewerSummary
+            {
+                Name = entry.User.DisplayName ?? entry.User.Nickname,
+                Uuid = entry.User.Uuid,
+                ReviewerType = entry.ReviewerType,
+            });
+        }
+
+        return new DefaultReviewerListResult
+        {
+            Reviewers = reviewers,
+            NextCursor = page.NextCursor,
+            TotalSize = page.TotalSize,
+        };
+    }
+
+    /// <summary>Maps one page of build statuses.</summary>
+    internal static PullRequestStatusListResult Statuses(Page<CommitStatusDto> page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+
+        var statuses = new List<PullRequestStatusSummary>(page.Items.Count);
+
+        foreach (var status in page.Items)
+        {
+            statuses.Add(new PullRequestStatusSummary
+            {
+                State = status.State,
+                Key = status.Key,
+                Name = status.Name,
+                Url = status.Url,
+                Description = string.IsNullOrWhiteSpace(status.Description) ? null : status.Description,
+                Refname = status.Refname,
+                UpdatedOn = status.UpdatedOn,
+            });
+        }
+
+        return new PullRequestStatusListResult
+        {
+            Statuses = statuses,
+            NextCursor = page.NextCursor,
+            TotalSize = page.TotalSize,
+        };
+    }
+
+    /// <summary>Maps one task.</summary>
+    internal static PullRequestTask Task(TaskDto dto)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        return new PullRequestTask
+        {
+            Id = dto.Id ?? 0,
+            State = dto.State,
+            Content = dto.Content?.Raw,
+            Creator = User(dto.Creator),
+            ResolvedBy = User(dto.ResolvedBy),
+            CommentId = dto.Comment?.Id,
+            CreatedOn = dto.CreatedOn,
+            UpdatedOn = dto.UpdatedOn,
+        };
+    }
+
+    /// <summary>Maps one page of tasks.</summary>
+    internal static PullRequestTaskListResult Tasks(Page<TaskDto> page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+
+        var tasks = new List<PullRequestTask>(page.Items.Count);
+
+        foreach (var task in page.Items)
+        {
+            tasks.Add(Task(task));
+        }
+
+        return new PullRequestTaskListResult
+        {
+            Tasks = tasks,
+            NextCursor = page.NextCursor,
+            TotalSize = page.TotalSize,
         };
     }
 

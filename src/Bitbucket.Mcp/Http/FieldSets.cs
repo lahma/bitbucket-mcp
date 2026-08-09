@@ -33,7 +33,7 @@ internal static class FieldSets
         "next,size," +
         "values.id,values.title,values.state,values.draft," +
         "values.created_on,values.updated_on,values.comment_count,values.task_count," +
-        "values.close_source_branch," +
+        "values.close_source_branch,values.links.html.href," +
         "values.author.display_name,values.author.uuid,values.author.nickname," +
         "values.source.branch.name,values.source.commit.hash,values.source.repository.full_name," +
         "values.destination.branch.name,values.destination.commit.hash,values.destination.repository.full_name";
@@ -44,7 +44,7 @@ internal static class FieldSets
     /// </summary>
     internal const string PullRequestDetail =
         "id,title,state,draft,created_on,updated_on,comment_count,task_count,close_source_branch," +
-        "description,reason," +
+        "description,reason,links.html.href," +
         "author.display_name,author.uuid,author.nickname," +
         "closed_by.display_name,closed_by.uuid,closed_by.nickname," +
         "source.branch.name,source.commit.hash,source.repository.full_name," +
@@ -61,7 +61,7 @@ internal static class FieldSets
     internal const string Comments =
         "next,size," +
         "values.id,values.created_on,values.updated_on,values.deleted," +
-        "values.content.raw," +
+        "values.content.raw,values.links.html.href," +
         "values.user.display_name,values.user.uuid,values.user.nickname," +
         "values.parent.id," +
         "values.inline.path,values.inline.from,values.inline.to," +
@@ -79,7 +79,7 @@ internal static class FieldSets
     /// </remarks>
     internal const string Comment =
         "id,created_on,updated_on,deleted," +
-        "content.raw," +
+        "content.raw,links.html.href," +
         "user.display_name,user.uuid,user.nickname," +
         "parent.id," +
         "inline.path,inline.from,inline.to,inline.start_from,inline.start_to," +
@@ -96,6 +96,15 @@ internal static class FieldSets
         "user.display_name,user.uuid,user.nickname";
 
     /// <summary>
+    /// <c>POST /pullrequests/{id}/comments/{cid}/resolve</c> — fills <c>CommentResolutionDto</c>.
+    /// This endpoint answers with the resolution record, not with the comment. Not paginated, so no
+    /// <c>next</c>.
+    /// </summary>
+    internal const string CommentResolution =
+        "created_on," +
+        "user.display_name,user.uuid,user.nickname";
+
+    /// <summary>
     /// <c>GET /pullrequests/{id}/diffstat</c> — fills <c>DiffStatEntryDto</c>. This is the entry
     /// point of every diff workflow, so it is kept as small as it can usefully be.
     /// </summary>
@@ -103,4 +112,50 @@ internal static class FieldSets
         "next,size," +
         "values.status,values.lines_added,values.lines_removed," +
         "values.old.path,values.new.path";
+
+    /// <summary>
+    /// <c>GET /effective-default-reviewers</c> — fills <c>DefaultReviewerDto</c>. Each entry is a
+    /// wrapper around the account, so every account field is nested under <c>user</c>.
+    /// </summary>
+    internal const string DefaultReviewers =
+        "next,size," +
+        "values.reviewer_type," +
+        "values.user.display_name,values.user.uuid,values.user.nickname";
+
+    /// <summary>
+    /// <c>GET /pullrequests/{id}/statuses</c> — fills <c>CommitStatusDto</c>. Without
+    /// <c>created_on</c>: a status that has been re-run twice is only interesting as it stands now.
+    /// </summary>
+    internal const string CommitStatuses =
+        "next,size," +
+        "values.state,values.key,values.name,values.url," +
+        "values.description,values.refname,values.updated_on";
+
+    /// <summary>
+    /// <c>GET /pullrequests/{id}/tasks</c> — fills <c>TaskDto</c>. Only the attached comment's
+    /// <c>id</c> is asked for: the comment's own text is already reachable through
+    /// <c>getPullRequestComments</c>.
+    /// </summary>
+    internal const string Tasks =
+        "next,size," +
+        "values.id,values.state,values.created_on,values.updated_on," +
+        "values.content.raw," +
+        "values.creator.display_name,values.creator.uuid,values.creator.nickname," +
+        "values.resolved_by.display_name,values.resolved_by.uuid,values.resolved_by.nickname," +
+        "values.comment.id";
+
+    /// <summary>
+    /// <c>GET|POST|PUT /pullrequests/{id}/tasks[/{taskId}]</c> — one task, filling <c>TaskDto</c>.
+    /// Not paginated, so no <c>next</c>.
+    /// </summary>
+    /// <remarks>
+    /// The same shape as <see cref="Tasks"/> without the <c>values.</c> prefix; the two describe one
+    /// DTO and have to be kept in step.
+    /// </remarks>
+    internal const string Task =
+        "id,state,created_on,updated_on," +
+        "content.raw," +
+        "creator.display_name,creator.uuid,creator.nickname," +
+        "resolved_by.display_name,resolved_by.uuid,resolved_by.nickname," +
+        "comment.id";
 }

@@ -1,9 +1,10 @@
 # bitbucket-mcp
 
 A self-owned [Model Context Protocol](https://modelcontextprotocol.io) server for **Bitbucket
-Cloud**, covering the full pull-request lifecycle in ten tools — list, read, diff, comment,
-review, create, update, merge, decline — including the gaps in Atlassian's own Bitbucket tools
-(update, decline, request changes, unapprove, diffstat, inline comments). It is written in C# on
+Cloud**, covering the full pull-request lifecycle in sixteen tools — list, read, diff, comment,
+resolve, task, review, create, update, merge, decline — including the gaps in Atlassian's own
+Bitbucket tools (update, decline, request changes, unapprove, diffstat, inline comments, thread
+resolution, tasks, build statuses, default reviewers). It is written in C# on
 .NET 10 and ships as a Native AOT binary per platform: one self-contained executable, about 18 MB
 on win-x64 (6 MB in the release archive), starting in roughly ten milliseconds. The point of the
 project is a supply chain one person can actually audit — the whole runtime dependency tree is
@@ -20,21 +21,28 @@ Bitbucket Data Center is explicitly out of scope.
 
 | Tool | What it does | Annotations |
 |---|---|---|
-| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches). Defaults to open ones only. | read-only, idempotent |
-| `getPullRequest` | Reads one pull request in full: title, description, state, branches, reviewers and participants with their approvals. This is where reviewer UUIDs come from. | read-only, idempotent |
-| `getPullRequestDiff` | Fetches a pull request's changes: `mode="diffstat"` (default) lists the changed files, `mode="diff"` with `paths` returns the unified diff. Truncation is always marked inline. | read-only, idempotent |
+| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches, web URL). Defaults to open ones only; `sourceBranch` answers "does this branch already have a pull request?". | read-only, idempotent |
+| `getPullRequest` | Reads one pull request in full: title, description, state, branches, web URL, reviewers and participants with their approvals. | read-only, idempotent |
+| `getPullRequestDiff` | Fetches a pull request's changes: with no arguments it lists the changed files, and passing `paths` returns those files' unified diff. Truncation is always marked inline. | read-only, idempotent |
 | `getPullRequestComments` | Lists a pull request's comments — general and inline — oldest first, with deleted comments filtered out. | read-only, idempotent |
+| `listDefaultReviewers` | Lists the repository's effective default reviewers with their account UUIDs, including the ones inherited from its project. Where reviewer UUIDs come from when there is no pull request to read them off. | read-only, idempotent |
+| `listPullRequestStatuses` | Lists the build statuses reported against a pull request — the merge-readiness check to run before `mergePullRequest`. | read-only, idempotent |
+| `listPullRequestTasks` | Lists a pull request's tasks, `RESOLVED` or `UNRESOLVED` — the outstanding work, which the comments alone do not tell you. | read-only, idempotent |
 | `createPullRequest` | Opens a new pull request. Title and source branch are required; reviewers are account UUIDs. | write, **not** destructive |
 | `updatePullRequest` | Changes an existing pull request's title, description, destination branch or reviewer list. `reviewers` replaces the whole list. | write, destructive |
 | `addPullRequestComment` | Posts a comment: general, a reply, or inline on a line of the diff — anchored by `codeSnippet` copied verbatim out of the diff, or by `line` plus `lineType`. | write, **not** destructive |
+| `resolvePullRequestComment` | Marks an inline comment thread resolved, or reopens it. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
+| `addPullRequestTask` | Adds a task — one tracked item of work, optionally hung off a comment. Bitbucket counts these, and a repository can require them resolved before merging. | write, **not** destructive |
+| `updatePullRequestTask` | Ticks a task off, reopens it, or rewrites its text. | write, **not** destructive, idempotent |
 | `setPullRequestReviewStatus` | Sets the authenticated user's own review state: `APPROVED`, `CHANGES_REQUESTED` or `UNAPPROVED` (clears both flags). | write, **not** destructive, idempotent |
 | `mergePullRequest` | Merges a pull request into its destination branch, with an optional merge strategy. | write, destructive |
 | `declinePullRequest` | Declines a pull request, closing it without merging. | write, destructive |
 
 Every tool is annotated open-world (it talks to a live Bitbucket workspace) and returns structured
-content. `Destructive` defaults to *true* in the MCP SDK, so the three write tools that only ever
-add something say otherwise explicitly — a client should prompt before a merge, not before a
-comment.
+content. `Destructive` defaults to *true* in the MCP SDK, so the six write tools that do not
+destroy anything say otherwise explicitly — a client should prompt before a merge, not before a
+comment. The full annotation table, and the two rows that are judgement calls rather than readings
+of the API, are in [AGENTS.md](AGENTS.md#tool-table).
 
 ## Install
 
@@ -372,7 +380,9 @@ A review, end to end:
    listPullRequests { "repository": "my-repo", "state": "OPEN" }
    ```
 
-   Returns a summary per pull request plus a `nextCursor` when there are more pages.
+   Returns a summary per pull request — including its `url` on bitbucket.org — plus a `nextCursor`
+   when there are more pages. Add `"sourceBranch": "feature/clamp"` to ask whether one branch
+   already has a pull request, which is the check to make before opening another one.
 
 2. **Read it.**
 
@@ -380,30 +390,34 @@ A review, end to end:
    getPullRequest { "repository": "my-repo", "pullRequestId": 42 }
    ```
 
-   Description, state, branches, reviewers and their approvals. This is also where reviewer
+   Description, state, branches, reviewers and their approvals. This is also one place reviewer
    **UUIDs** come from — `{01234567-89ab-cdef-0123-456789abcdef}`, in braces. Bitbucket rejects
-   names, nicknames and email addresses as reviewers, so they are never guessed here.
+   names, nicknames and email addresses as reviewers, so they are never guessed here. On a
+   repository with no pull requests yet, `listDefaultReviewers` is where to get them instead.
 
 3. **See what changed.**
 
    ```text
-   getPullRequestDiff { "repository": "my-repo", "pullRequestId": 42, "mode": "diffstat" }
+   getPullRequestDiff { "repository": "my-repo", "pullRequestId": 42 }
    ```
 
-   A list of files with per-file added/removed counts, paginated.
+   A list of files with per-file added/removed counts, paginated. This is what the tool does with
+   no `paths` and no `mode` — the whole workflow's default.
 
 4. **Fetch only the files worth reading.**
 
    ```text
    getPullRequestDiff {
-     "repository": "my-repo", "pullRequestId": 42, "mode": "diff",
+     "repository": "my-repo", "pullRequestId": 42,
      "paths": ["src/Api/Client.cs", "src/Api/Retry.cs"]
    }
    ```
 
-   Paths are spelled exactly as diffstat reported them. The response carries `truncated` and a
-   `hint` naming the call that shows the rest; every cut also leaves a visible marker inside the
-   diff text. A truncated diff is never presented as a whole one.
+   Naming `paths` is what selects the diff — `mode` does not have to be set, and setting it to
+   `"diffstat"` alongside `paths` is refused rather than silently ignored. Paths are spelled
+   exactly as diffstat reported them. The response carries `truncated` and a `hint` naming the call
+   that shows the rest; every cut also leaves a visible marker inside the diff text. A truncated
+   diff is never presented as a whole one.
 
 5. **Comment on a line.**
 
@@ -421,7 +435,22 @@ A review, end to end:
    or missing snippet comes back as an error listing the candidate lines rather than a comment on
    the wrong line. `line` plus `lineType` (`ADDED`, `REMOVED`, `CONTEXT`) is the fallback.
 
-6. **Approve.**
+6. **Turn a remark into something that has to be dealt with.**
+
+   ```text
+   addPullRequestTask {
+     "repository": "my-repo", "pullRequestId": 42,
+     "content": "Honour Retry-After here.",
+     "commentId": 987654321
+   }
+   ```
+
+   A comment can be read and forgotten; a task is counted, and a repository can require every task
+   resolved before it will merge. `listPullRequestTasks` shows what is still `UNRESOLVED`, and
+   `updatePullRequestTask` ticks one off. Once a thread has been dealt with,
+   `resolvePullRequestComment` marks it resolved — the same tick, on the comment side.
+
+7. **Approve.**
 
    ```text
    setPullRequestReviewStatus {
@@ -433,13 +462,24 @@ A review, end to end:
    Affects only the authenticated user's own stance. `UNAPPROVED` withdraws both an approval and a
    change request.
 
+8. **Check the builds, then merge.**
+
+   ```text
+   listPullRequestStatuses { "repository": "my-repo", "pullRequestId": 42 }
+   ```
+
+   Every CI result, deployment and external check, each `SUCCESSFUL`, `FAILED`, `INPROGRESS` or
+   `STOPPED`, with the URL of the run. Bitbucket will merge over a failing build if the repository
+   does not require it, so this is the check to make before `mergePullRequest`. An empty list means
+   nothing has reported yet — which is not the same as passing.
+
 Two conventions worth repeating, because they are what the server's `initialize` instructions
 spend their budget on:
 
 - **Cursors are opaque.** Pass a result's `nextCursor` back as `cursor` verbatim. It is a
   base64url-encoded, validated Bitbucket URL, not something to edit or construct. Every filter is
   already encoded in it, so the other arguments are ignored when a cursor is passed.
-- **Reviewers are UUIDs**, in braced form, read from `getPullRequest`.
+- **Reviewers are UUIDs**, in braced form, read from `listDefaultReviewers` or `getPullRequest`.
 
 ## Troubleshooting
 
@@ -468,9 +508,9 @@ authentication" advice no longer applies. Check three things, in this order:
    checks is usually this one.
 
 **HTTP 555, "diff too large".** Bitbucket refuses to build diffs beyond roughly 8,000 changed
-lines or 200 files, and retrying never helps. Call `getPullRequestDiff` with `mode="diffstat"`,
-then again with `mode="diff"` and `paths=[...]` naming the files you need. This is why `diffstat`
-is the default mode.
+lines or 200 files, and retrying never helps. Call `getPullRequestDiff` with no `paths` to list the
+changed files, then again with `paths=[...]` naming the files you need. This is why listing the
+files is what the tool does by default, and why `paths` selects the diff on its own.
 
 **404 on a repository you can see in the browser.** `workspace` and `repository` are the two URL
 *slugs* of `bitbucket.org/{workspace}/{repository}`, not display names. Bitbucket also answers 404

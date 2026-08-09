@@ -50,6 +50,10 @@ internal sealed record CommentDto
     /// <summary>The diff anchor, for an inline comment.</summary>
     [JsonPropertyName("inline")]
     public InlineDto? Inline { get; init; }
+
+    /// <summary>Bitbucket's own links; only <c>html.href</c> is ever requested.</summary>
+    [JsonPropertyName("links")]
+    public LinksDto? Links { get; init; }
 }
 
 /// <summary>A comment body. Bitbucket also renders <c>html</c> and <c>markup</c>; we only ever want the source.</summary>

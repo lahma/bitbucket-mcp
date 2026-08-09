@@ -31,19 +31,28 @@ namespace Bitbucket.Mcp.Tests.Tools;
 /// </remarks>
 public class ToolInventoryTests
 {
-    /// <summary>The plan's tool list, in full. Adding a tool must mean editing this line.</summary>
+    /// <summary>
+    /// The design's tool list (AGENTS.md, *Tool table*), in full and in ordinal order. Adding a tool
+    /// must mean editing this array, that table and <c>Build.cs</c>'s <c>ExpectedToolNames</c>.
+    /// </summary>
     private static readonly string[] ExpectedToolNames =
     [
         "addPullRequestComment",
+        "addPullRequestTask",
         "createPullRequest",
         "declinePullRequest",
         "getPullRequest",
         "getPullRequestComments",
         "getPullRequestDiff",
+        "listDefaultReviewers",
+        "listPullRequestStatuses",
+        "listPullRequestTasks",
         "listPullRequests",
         "mergePullRequest",
+        "resolvePullRequestComment",
         "setPullRequestReviewStatus",
         "updatePullRequest",
+        "updatePullRequestTask",
     ];
 
     /// <summary>
@@ -58,11 +67,12 @@ public class ToolInventoryTests
     ];
 
     [Fact]
-    public void ExactlyTenToolsAreDeclaredAcrossTheTwoToolClasses()
+    public void ExactlySixteenToolsAreDeclaredAcrossTheTwoToolClasses()
     {
         Assert.Equal(2, ToolTestHost.ToolTypes.Count);
-        Assert.Equal(10, ToolTestHost.ToolMethods.Count);
-        Assert.Equal(10, ToolTestHost.Tools.Count);
+        Assert.Equal(ExpectedToolNames.Length, ToolTestHost.ToolMethods.Count);
+        Assert.Equal(ExpectedToolNames.Length, ToolTestHost.Tools.Count);
+        Assert.Equal(16, ExpectedToolNames.Length);
     }
 
     [Fact]
@@ -78,9 +88,15 @@ public class ToolInventoryTests
     [InlineData("getPullRequest", "Get pull request")]
     [InlineData("getPullRequestDiff", "Get pull request diff")]
     [InlineData("getPullRequestComments", "Get pull request comments")]
+    [InlineData("listDefaultReviewers", "List default reviewers")]
+    [InlineData("listPullRequestStatuses", "List pull request statuses")]
+    [InlineData("listPullRequestTasks", "List pull request tasks")]
     [InlineData("createPullRequest", "Create pull request")]
     [InlineData("updatePullRequest", "Update pull request")]
     [InlineData("addPullRequestComment", "Add pull request comment")]
+    [InlineData("resolvePullRequestComment", "Resolve pull request comment")]
+    [InlineData("addPullRequestTask", "Add pull request task")]
+    [InlineData("updatePullRequestTask", "Update pull request task")]
     [InlineData("setPullRequestReviewStatus", "Set pull request review status")]
     [InlineData("mergePullRequest", "Merge pull request")]
     [InlineData("declinePullRequest", "Decline pull request")]
@@ -93,8 +109,8 @@ public class ToolInventoryTests
     }
 
     /// <summary>
-    /// The annotation table from the plan, verbatim. A <see langword="null"/> destructive hint means
-    /// the annotation is absent, which is what the four read-only tools want: <c>readOnlyHint</c>
+    /// The annotation table from AGENTS.md, verbatim. A <see langword="null"/> destructive hint means
+    /// the annotation is absent, which is what the seven read-only tools want: <c>readOnlyHint</c>
     /// already says they change nothing, and a destructive hint on a read tool is noise.
     /// </summary>
     [Theory]
@@ -102,8 +118,14 @@ public class ToolInventoryTests
     [InlineData("getPullRequest", true, null, true, true)]
     [InlineData("getPullRequestDiff", true, null, true, true)]
     [InlineData("getPullRequestComments", true, null, true, true)]
+    [InlineData("listDefaultReviewers", true, null, true, true)]
+    [InlineData("listPullRequestStatuses", true, null, true, true)]
+    [InlineData("listPullRequestTasks", true, null, true, true)]
     [InlineData("createPullRequest", false, false, false, true)]
     [InlineData("addPullRequestComment", false, false, false, true)]
+    [InlineData("addPullRequestTask", false, false, false, true)]
+    [InlineData("resolvePullRequestComment", false, false, true, true)]
+    [InlineData("updatePullRequestTask", false, false, true, true)]
     [InlineData("setPullRequestReviewStatus", false, false, true, true)]
     [InlineData("updatePullRequest", false, true, false, true)]
     [InlineData("mergePullRequest", false, true, false, true)]

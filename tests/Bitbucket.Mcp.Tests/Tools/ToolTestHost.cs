@@ -15,7 +15,7 @@ using ModelContextProtocol.Server;
 namespace Bitbucket.Mcp.Tests.Tools;
 
 /// <summary>
-/// Shared scaffolding for the tool-layer tests: the two tool classes, the ten
+/// Shared scaffolding for the tool-layer tests: the two tool classes, the sixteen
 /// <see cref="McpServerTool"/> instances built exactly the way the server builds them, and the
 /// stubbed collaborators the tool methods take as plain parameters (D8).
 /// </summary>
@@ -148,6 +148,13 @@ internal static class ToolFixtures
     internal const string NextPageUrl =
         "https://api.bitbucket.org/2.0/repositories/acme/widgets/pullrequests?page=2";
 
+    /// <summary>The web UI link every pull request fixture carries as <c>links.html.href</c>.</summary>
+    internal const string PullRequestWebUrl = "https://bitbucket.org/acme/widgets/pull-requests/42";
+
+    /// <summary>The web UI link the comment fixtures carry as <c>links.html.href</c>.</summary>
+    internal const string CommentWebUrl =
+        "https://bitbucket.org/acme/widgets/pull-requests/42/_/diff#comment-1001";
+
     /// <summary>One page of pull requests with another page behind it.</summary>
     internal const string PullRequestPage = $$"""
         {
@@ -165,14 +172,15 @@ internal static class ToolFixtures
               "task_count": 0,
               "author": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}", "nickname": "ada" },
               "source": { "branch": { "name": "feature/clamp" } },
-              "destination": { "branch": { "name": "main" } }
+              "destination": { "branch": { "name": "main" } },
+              "links": { "html": { "href": "{{PullRequestWebUrl}}" } }
             }
           ]
         }
         """;
 
     /// <summary>One pull request in full, with a reviewer whose stance lives in the participant list.</summary>
-    internal const string PullRequestDetail = """
+    internal const string PullRequestDetail = $$"""
         {
           "id": 42,
           "title": "Clamp the widget size",
@@ -187,6 +195,7 @@ internal static class ToolFixtures
           "author": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}" },
           "source": { "branch": { "name": "feature/clamp" } },
           "destination": { "branch": { "name": "main" } },
+          "links": { "html": { "href": "{{PullRequestWebUrl}}" } },
           "reviewers": [
             { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" }
           ],
@@ -232,7 +241,8 @@ internal static class ToolFixtures
               "created_on": "2026-08-01T11:00:00+00:00",
               "deleted": false,
               "content": { "raw": "Nice catch." },
-              "user": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" }
+              "user": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+              "links": { "html": { "href": "{{CommentWebUrl}}" } }
             },
             {
               "id": 1002,
@@ -256,12 +266,13 @@ internal static class ToolFixtures
         """;
 
     /// <summary>A freshly posted comment, as the create endpoint answers.</summary>
-    internal const string CreatedComment = """
+    internal const string CreatedComment = $$"""
         {
           "id": 2001,
           "created_on": "2026-08-03T08:00:00+00:00",
           "content": { "raw": "Please clamp the upper bound as well." },
-          "user": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" }
+          "user": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+          "links": { "html": { "href": "{{CommentWebUrl}}" } }
         }
         """;
 
@@ -289,6 +300,116 @@ internal static class ToolFixtures
               "new": { "path": "src/Widget.cs" }
             }
           ]
+        }
+        """;
+
+    /// <summary>
+    /// One page of effective default reviewers: one configured on the repository, one inherited
+    /// from its project — the distinction the effective endpoint exists to make.
+    /// </summary>
+    internal const string DefaultReviewerPage = $$"""
+        {
+          "size": 2,
+          "next": "{{NextPageUrl}}",
+          "values": [
+            {
+              "reviewer_type": "repository",
+              "user": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" }
+            },
+            {
+              "reviewer_type": "project",
+              "user": { "display_name": "Alan Turing", "uuid": "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}" }
+            }
+          ]
+        }
+        """;
+
+    /// <summary>One page of build statuses, with a failing one that should stop a merge.</summary>
+    internal const string CommitStatusPage = $$"""
+        {
+          "size": 2,
+          "next": "{{NextPageUrl}}",
+          "values": [
+            {
+              "state": "SUCCESSFUL",
+              "key": "BB-BUILD",
+              "name": "BB-BUILD-17",
+              "url": "https://ci.example.com/builds/17",
+              "refname": "feature/clamp",
+              "updated_on": "2026-08-02T10:00:00+00:00"
+            },
+            {
+              "state": "FAILED",
+              "key": "BB-DEPLOY",
+              "name": "BB-DEPLOY-4",
+              "url": "https://ci.example.com/deploys/4",
+              "description": "Smoke tests failed",
+              "updated_on": "2026-08-02T10:20:00+00:00"
+            }
+          ]
+        }
+        """;
+
+    /// <summary>One page of tasks: one still open, one resolved and hanging off a comment.</summary>
+    internal const string TaskPage = $$"""
+        {
+          "size": 2,
+          "next": "{{NextPageUrl}}",
+          "values": [
+            {
+              "id": 501,
+              "state": "UNRESOLVED",
+              "content": { "raw": "Clamp the upper bound too." },
+              "creator": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+              "created_on": "2026-08-02T09:00:00+00:00"
+            },
+            {
+              "id": 502,
+              "state": "RESOLVED",
+              "content": { "raw": "Add a test for the negative case." },
+              "creator": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+              "resolved_by": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}" },
+              "comment": { "id": 1001 },
+              "created_on": "2026-08-02T09:05:00+00:00",
+              "updated_on": "2026-08-02T11:00:00+00:00"
+            }
+          ]
+        }
+        """;
+
+    /// <summary>A freshly created task, as the create endpoint answers.</summary>
+    internal const string CreatedTask = """
+        {
+          "id": 503,
+          "state": "UNRESOLVED",
+          "content": { "raw": "Clamp the upper bound too." },
+          "creator": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+          "comment": { "id": 1001 },
+          "created_on": "2026-08-03T08:00:00+00:00"
+        }
+        """;
+
+    /// <summary>The same task once resolved, as the update endpoint answers.</summary>
+    internal const string ResolvedTask = """
+        {
+          "id": 503,
+          "state": "RESOLVED",
+          "content": { "raw": "Clamp the upper bound too." },
+          "creator": { "display_name": "Grace Hopper", "uuid": "{99999999-8888-7777-6666-555555555555}" },
+          "resolved_by": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}" },
+          "created_on": "2026-08-03T08:00:00+00:00",
+          "updated_on": "2026-08-03T09:00:00+00:00"
+        }
+        """;
+
+    /// <summary>
+    /// What the resolve endpoint answers with: the resolution record, not the comment.
+    /// </summary>
+    internal const string CommentResolution = """
+        {
+          "type": "comment_resolution",
+          "created_on": "2026-08-03T10:00:00+00:00",
+          "user": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}" }
         }
         """;
 

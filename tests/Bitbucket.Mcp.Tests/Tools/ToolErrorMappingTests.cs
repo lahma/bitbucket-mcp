@@ -93,6 +93,32 @@ public class ToolErrorMappingTests
     }
 
     /// <summary>
+    /// A repository-scoped tool has no pull request to name, so the target it reports is the
+    /// repository — naming a pull request that was never part of the call would send the reader
+    /// looking in the wrong place.
+    /// </summary>
+    [Fact]
+    public async Task ARepositoryScopedToolNamesTheRepositoryRatherThanAPullRequest()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.NotFound, """{"type":"error","error":{"message":"Not found"}}""");
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.ListDefaultReviewersAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                Workspace,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("404", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("repository acme/widgets", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("pull request #", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A 403 has three plausible causes and the message has to name all three, because only the
     /// first is fixable by changing scopes: a missing scope (read and write do not imply each
     /// other), an API token sent as Bearer rather than Basic, or an account without write access.

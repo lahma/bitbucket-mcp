@@ -33,6 +33,9 @@ namespace Bitbucket.Mcp.Http.Models;
 [JsonSerializable(typeof(PageEnvelope<PullRequestSummaryDto>), TypeInfoPropertyName = "PullRequestSummaryPage")]
 [JsonSerializable(typeof(PageEnvelope<CommentDto>), TypeInfoPropertyName = "CommentPage")]
 [JsonSerializable(typeof(PageEnvelope<DiffStatEntryDto>), TypeInfoPropertyName = "DiffStatEntryPage")]
+[JsonSerializable(typeof(PageEnvelope<DefaultReviewerDto>), TypeInfoPropertyName = "DefaultReviewerPage")]
+[JsonSerializable(typeof(PageEnvelope<CommitStatusDto>), TypeInfoPropertyName = "CommitStatusPage")]
+[JsonSerializable(typeof(PageEnvelope<TaskDto>), TypeInfoPropertyName = "TaskPage")]
 
 // Single-object responses.
 [JsonSerializable(typeof(PullRequestDto))]
@@ -40,8 +43,14 @@ namespace Bitbucket.Mcp.Http.Models;
 [JsonSerializable(typeof(AccountDto))]
 [JsonSerializable(typeof(ParticipantDto))]
 [JsonSerializable(typeof(CommentDto))]
+[JsonSerializable(typeof(CommentResolutionDto))]
+[JsonSerializable(typeof(DefaultReviewerDto))]
+[JsonSerializable(typeof(CommitStatusDto))]
+[JsonSerializable(typeof(TaskDto))]
 [JsonSerializable(typeof(DiffStatEntryDto))]
 [JsonSerializable(typeof(InlineDto))]
+[JsonSerializable(typeof(LinksDto))]
+[JsonSerializable(typeof(LinkDto))]
 [JsonSerializable(typeof(MergeTaskStatusDto))]
 [JsonSerializable(typeof(ErrorEnvelopeDto))]
 
@@ -51,6 +60,8 @@ namespace Bitbucket.Mcp.Http.Models;
 [JsonSerializable(typeof(CommentRequest))]
 [JsonSerializable(typeof(MergeRequest))]
 [JsonSerializable(typeof(DeclineRequest))]
+[JsonSerializable(typeof(CreateTaskRequest))]
+[JsonSerializable(typeof(UpdateTaskRequest))]
 
 // OAuth token endpoint.
 [JsonSerializable(typeof(OAuthTokenResponse))]

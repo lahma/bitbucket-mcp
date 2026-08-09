@@ -46,8 +46,32 @@ public class ToolSchemaTests
     [Theory]
     [InlineData(
         "listPullRequests",
-        "repository,workspace,state,author,pageSize,cursor",
+        "repository,workspace,state,author,sourceBranch,pageSize,cursor",
         "repository")]
+    [InlineData(
+        "listDefaultReviewers",
+        "repository,workspace,pageSize,cursor",
+        "repository")]
+    [InlineData(
+        "listPullRequestStatuses",
+        "repository,pullRequestId,workspace,pageSize,cursor",
+        "repository,pullRequestId")]
+    [InlineData(
+        "listPullRequestTasks",
+        "repository,pullRequestId,workspace,pageSize,cursor",
+        "repository,pullRequestId")]
+    [InlineData(
+        "resolvePullRequestComment",
+        "repository,pullRequestId,commentId,resolved,workspace",
+        "repository,pullRequestId,commentId,resolved")]
+    [InlineData(
+        "addPullRequestTask",
+        "repository,pullRequestId,content,workspace,commentId",
+        "repository,pullRequestId,content")]
+    [InlineData(
+        "updatePullRequestTask",
+        "repository,pullRequestId,taskId,workspace,state,content",
+        "repository,pullRequestId,taskId")]
     [InlineData(
         "getPullRequest",
         "repository,pullRequestId,workspace",
@@ -173,6 +197,9 @@ public class ToolSchemaTests
     [Theory]
     [InlineData("listPullRequests", "nextCursor")]
     [InlineData("getPullRequestComments", "nextCursor")]
+    [InlineData("listDefaultReviewers", "nextCursor")]
+    [InlineData("listPullRequestStatuses", "nextCursor")]
+    [InlineData("listPullRequestTasks", "nextCursor")]
     public void PaginatedOutputSchemasCarryTheCursor(string name, string cursorProperty)
     {
         var outputSchema = ToolTestHost.Find(name).ProtocolTool.OutputSchema;

@@ -61,6 +61,10 @@ internal record PullRequestSummaryDto
     /// <summary>Whether merging will delete the source branch.</summary>
     [JsonPropertyName("close_source_branch")]
     public bool? CloseSourceBranch { get; init; }
+
+    /// <summary>Bitbucket's own links; only <c>html.href</c> is ever requested.</summary>
+    [JsonPropertyName("links")]
+    public LinksDto? Links { get; init; }
 }
 
 /// <summary>

@@ -121,6 +121,145 @@ public class ToolBehaviourTests
         Assert.DoesNotContain("q", QueryOf(handler.Requests[0]).Keys);
     }
 
+    /// <summary>
+    /// The branch filter is a BBQL clause, ANDed with the state filter rather than replacing it —
+    /// "does this branch already have an open pull request?" is the question createPullRequest
+    /// should be asking, and it is only answerable if both clauses survive.
+    /// </summary>
+    [Fact]
+    public async Task SourceBranchBecomesABbqlClauseAndedWithTheStateFilter()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            sourceBranch: "feature/clamp",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            "state = \"OPEN\" AND source.branch.name = \"feature/clamp\"",
+            Single(handler, "q"));
+    }
+
+    [Fact]
+    public async Task SourceBranchIsTheOnlyClauseWhenTheStateFilterIsWidenedToAll()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            state: "ALL",
+            sourceBranch: "feature/clamp",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("source.branch.name = \"feature/clamp\"", Single(handler, "q"));
+    }
+
+    /// <summary>
+    /// BBQL delimits strings with <c>"</c> and documents no escape sequence, so a branch name
+    /// containing one cannot be turned into a literal safely. Refusing beats guessing at an escape
+    /// the parser may not implement — an unescaped quote would not fail, it would end the literal
+    /// early and silently change what the query asks for.
+    /// </summary>
+    [Theory]
+    [InlineData("feature/\"quoted\"")]
+    [InlineData("feature\\clamp")]
+    public async Task ASourceBranchThatCannotBeABbqlLiteralIsRefused(string branch)
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.ListPullRequestsAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                Workspace,
+                sourceBranch: branch,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("double quote or a backslash", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>The value still reaches the wire percent-encoded, quotes and all.</summary>
+    [Fact]
+    public async Task TheBranchClauseIsPercentEncodedInTheQueryString()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            sourceBranch: "feature/clamp",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var query = handler.Requests[0].Uri!.Query;
+
+        Assert.DoesNotContain('"', query);
+        Assert.Contains("source.branch.name%20%3D%20%22feature%2Fclamp%22", query, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Bitbucket stores the short branch name, so a fully-qualified ref would match nothing at all —
+    /// silently, which is the worst possible answer to "does this branch have a pull request?".
+    /// </summary>
+    [Fact]
+    public async Task SourceBranchStripsARefsHeadsPrefixRatherThanMatchingNothing()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            state: "ALL",
+            sourceBranch: "refs/heads/feature/clamp",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("source.branch.name = \"feature/clamp\"", Single(handler, "q"));
+    }
+
+    [Fact]
+    public async Task AnEmptySourceBranchAddsNoClause()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            sourceBranch: "   ",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("state = \"OPEN\"", Single(handler, "q"));
+    }
+
     [Fact]
     public async Task AnUnknownStateIsRejectedWithTheAcceptedValues()
     {
@@ -665,6 +804,74 @@ public class ToolBehaviourTests
         Assert.DoesNotContain("null", json, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The one URL a model cannot synthesise. Every other <c>links</c> entry Bitbucket attaches is
+    /// an API URL this server composes itself, so exactly one of them is requested and mapped.
+    /// </summary>
+    [Fact]
+    public async Task PullRequestResultsCarryTheWebUrl()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+        var options = ToolTestHost.CreateOptions();
+
+        var list = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            options,
+            Repository,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var detail = await PullRequestReadTools.GetPullRequestAsync(
+            client,
+            options,
+            Repository,
+            42,
+            Workspace,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolFixtures.PullRequestWebUrl, list.PullRequests[0].Url);
+        Assert.Equal(ToolFixtures.PullRequestWebUrl, detail.Url);
+
+        // Requested, not inferred: an inclusive fields= list returns only what it names.
+        Assert.Contains("links.html.href", Single(handler.Requests[0], "fields"), StringComparison.Ordinal);
+        Assert.Contains("links.html.href", Single(handler.Requests[1], "fields"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CommentResultsCarryTheWebUrl()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CommentPage);
+        handler.EnqueueJson(ToolFixtures.CreatedComment);
+
+        using var client = ToolTestHost.CreateClient(handler);
+        var options = ToolTestHost.CreateOptions();
+
+        var listed = await PullRequestReadTools.GetPullRequestCommentsAsync(
+            client,
+            options,
+            Repository,
+            42,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var posted = await PullRequestWriteTools.AddPullRequestCommentAsync(
+            client,
+            options,
+            Repository,
+            42,
+            "Thanks!",
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolFixtures.CommentWebUrl, listed.Comments[0].Url);
+        Assert.Equal(ToolFixtures.CommentWebUrl, posted.Url);
+    }
+
     /// <summary>A reviewer without their stance cannot answer "is this ready to merge?".</summary>
     [Fact]
     public async Task ReviewersCarryTheStanceFromTheParticipantList()
@@ -795,6 +1002,125 @@ public class ToolBehaviourTests
         Assert.Contains("maxLinesPerFile=", file.Diff, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// <c>paths</c> names files to read, and only the diff mode reads files. Before this, the call
+    /// answered with the file list and nothing said why — from which a model reasonably concluded
+    /// the file was not in the pull request.
+    /// </summary>
+    [Fact]
+    public async Task PathsSelectDiffModeWithoutAnExplicitMode()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, ToolFixtures.SingleFileDiff, "text/plain");
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.GetPullRequestDiffAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            paths: ["src/Widget.cs"],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.EndsWith("/diff", handler.Requests[0].Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("diff", result.Mode);
+        Assert.Null(result.Diffstat);
+        Assert.Single(result.Diff!.Files);
+    }
+
+    /// <summary>An explicit mode is never overridden — the two arguments contradict each other.</summary>
+    [Fact]
+    public async Task PathsWithAnExplicitDiffstatModeIsRefusedRatherThanIgnored()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.GetPullRequestDiffAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                Workspace,
+                mode: "diffstat",
+                paths: ["src/Widget.cs"],
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("conflicts with paths", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Drop mode", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task MaxLinesPerFileWithAnExplicitDiffstatModeIsRefused()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.GetPullRequestDiffAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                Workspace,
+                mode: "diffstat",
+                maxLinesPerFile: 100,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("conflicts with maxLinesPerFile", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>Only the changed-file list is paginated, so a cursor cannot continue a diff.</summary>
+    [Fact]
+    public async Task ACursorAlongsideThePathsThatSelectDiffModeIsRefused()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.GetPullRequestDiffAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                Workspace,
+                paths: ["src/Widget.cs"],
+                cursor: BitbucketCursor.Encode(ToolFixtures.NextPageUrl),
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("cursor conflicts with", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>
+    /// Blank paths are not paths: <c>CleanList</c> drops them, and the mode must follow — otherwise
+    /// an empty array would quietly ask for the whole pull request's diff.
+    /// </summary>
+    [Fact]
+    public async Task AnEmptyPathsArrayStillMeansDiffstat()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.DiffStatPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.GetPullRequestDiffAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            paths: ["  "],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.EndsWith("/diffstat", handler.Requests[0].Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("diffstat", result.Mode);
+    }
+
     [Fact]
     public async Task AnUnknownDiffModeIsRejectedWithBothModes()
     {
@@ -899,6 +1225,533 @@ public class ToolBehaviourTests
         Assert.DoesNotContain("\"description\"", body, StringComparison.Ordinal);
 
         Assert.Equal(42, result.Id);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Default reviewers
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The <em>effective</em> endpoint, not plain <c>default-reviewers</c>: a repository whose
+    /// project configures the reviewers centrally has none of its own, and the plain endpoint then
+    /// answers with an empty list — which reads exactly like "this repository has no reviewers".
+    /// </summary>
+    [Fact]
+    public async Task DefaultReviewersComeFromTheEffectiveEndpointWithTheirOrigin()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.DefaultReviewerPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.ListDefaultReviewersAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            pageSize: 10,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.EndsWith("/effective-default-reviewers", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("10", Single(request, "pagelen"));
+
+        Assert.Equal(2, result.Reviewers.Count);
+        Assert.Equal("Grace Hopper", result.Reviewers[0].Name);
+        Assert.Equal("{99999999-8888-7777-6666-555555555555}", result.Reviewers[0].Uuid);
+        Assert.Equal("repository", result.Reviewers[0].ReviewerType);
+        Assert.Equal("project", result.Reviewers[1].ReviewerType);
+        Assert.Equal(2, result.TotalSize);
+
+        Assert.NotNull(result.NextCursor);
+        Assert.True(BitbucketCursor.TryDecode(result.NextCursor, out var decoded));
+        Assert.Equal(ToolFixtures.NextPageUrl, decoded);
+
+        var json = JsonSerializer.Serialize(result, BitbucketToolJsonContext.Default.DefaultReviewerListResult);
+        Assert.DoesNotContain("links", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("null", json, StringComparison.Ordinal);
+    }
+
+    /// <summary>The cursor is the whole request; handing it back must not re-derive the URL.</summary>
+    [Fact]
+    public async Task DefaultReviewersPaginateThroughTheCursor()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.DefaultReviewerPage);
+        handler.EnqueueJson("""{"values":[]}""");
+
+        using var client = ToolTestHost.CreateClient(handler);
+        var options = ToolTestHost.CreateOptions();
+
+        var first = await PullRequestReadTools.ListDefaultReviewersAsync(
+            client,
+            options,
+            Repository,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var second = await PullRequestReadTools.ListDefaultReviewersAsync(
+            client,
+            options,
+            Repository,
+            Workspace,
+            cursor: first.NextCursor,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolFixtures.NextPageUrl, handler.Requests[1].Uri!.ToString());
+        Assert.Empty(second.Reviewers);
+        Assert.Null(second.NextCursor);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Build statuses
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task StatusesReportEveryCheckWithItsStateAndLink()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CommitStatusPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.ListPullRequestStatusesAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.EndsWith("/pullrequests/42/statuses", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+
+        Assert.Equal(["SUCCESSFUL", "FAILED"], result.Statuses.Select(status => status.State));
+
+        var failed = result.Statuses[1];
+        Assert.Equal("BB-DEPLOY", failed.Key);
+        Assert.Equal("BB-DEPLOY-4", failed.Name);
+        Assert.Equal("https://ci.example.com/deploys/4", failed.Url);
+        Assert.Equal("Smoke tests failed", failed.Description);
+        Assert.Null(failed.Refname);
+
+        Assert.NotNull(result.NextCursor);
+
+        var json = JsonSerializer.Serialize(result, BitbucketToolJsonContext.Default.PullRequestStatusListResult);
+        Assert.DoesNotContain("null", json, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Tasks
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task TasksCarryTheirStateCreatorAndAttachedComment()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.TaskPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.ListPullRequestTasksAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.EndsWith("/pullrequests/42/tasks", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+
+        Assert.Equal([501L, 502L], result.Tasks.Select(task => task.Id));
+
+        var open = result.Tasks[0];
+        Assert.Equal("UNRESOLVED", open.State);
+        Assert.Equal("Clamp the upper bound too.", open.Content);
+        Assert.Equal("Grace Hopper", open.Creator?.Name);
+        Assert.Null(open.ResolvedBy);
+        Assert.Null(open.CommentId);
+
+        var done = result.Tasks[1];
+        Assert.Equal("RESOLVED", done.State);
+        Assert.Equal("Ada Lovelace", done.ResolvedBy?.Name);
+        Assert.Equal(1001, done.CommentId);
+
+        Assert.NotNull(result.NextCursor);
+
+        var json = JsonSerializer.Serialize(result, BitbucketToolJsonContext.Default.PullRequestTaskListResult);
+        Assert.DoesNotContain("null", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddingATaskPostsTheContentAndTheCommentItHangsOff()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CreatedTask, HttpStatusCode.Created);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.AddPullRequestTaskAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            "Clamp the upper bound too.",
+            Workspace,
+            commentId: 1001,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.EndsWith("/pullrequests/42/tasks", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal(
+            """{"content":{"raw":"Clamp the upper bound too."},"comment":{"id":1001}}""",
+            request.Body);
+
+        Assert.Equal(503, result.Id);
+        Assert.Equal("UNRESOLVED", result.State);
+        Assert.Equal(1001, result.CommentId);
+    }
+
+    [Fact]
+    public async Task AFreeStandingTaskSendsNoCommentAtAll()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CreatedTask, HttpStatusCode.Created);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.AddPullRequestTaskAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            "Clamp the upper bound too.",
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("comment", handler.Requests[0].Body!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATaskNeedsContent()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.AddPullRequestTaskAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                "   ",
+                Workspace,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("content is required", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>
+    /// Bitbucket's published schema marks both fields of the update body optional, so ticking a task
+    /// off is one PUT carrying one field — no read-modify-write, and no chance of clobbering a text
+    /// edit made in between.
+    /// </summary>
+    [Fact]
+    public async Task ResolvingATaskSendsTheStateAloneInASingleRequest()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.ResolvedTask);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestTaskAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            503,
+            Workspace,
+            state: "resolved",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.EndsWith("/pullrequests/42/tasks/503", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("""{"state":"RESOLVED"}""", request.Body);
+
+        Assert.Equal("RESOLVED", result.State);
+        Assert.Equal("Ada Lovelace", result.ResolvedBy?.Name);
+    }
+
+    /// <summary>
+    /// The schema says a state-only body is legal; the same endpoint documents a 400 for "a missing
+    /// required field". If Bitbucket turns out to mean the second, the task's own text is fetched
+    /// and sent back with the new state rather than the call simply failing.
+    /// </summary>
+    [Fact]
+    public async Task AStateOnlyUpdateFallsBackToResendingTheTasksOwnText()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadRequest, """{"error":{"message":"content: This field is required."}}""");
+        handler.EnqueueJson(ToolFixtures.CreatedTask);
+        handler.EnqueueJson(ToolFixtures.ResolvedTask);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestTaskAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            503,
+            Workspace,
+            state: "RESOLVED",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Put, handler.Requests[0].Method);
+        Assert.Equal(HttpMethod.Get, handler.Requests[1].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+
+        Assert.Equal(
+            """{"content":{"raw":"Clamp the upper bound too."},"state":"RESOLVED"}""",
+            handler.Requests[2].Body);
+
+        Assert.Equal("RESOLVED", result.State);
+    }
+
+    /// <summary>The fallback is for a state-only body; a 400 on a body that already had content is real.</summary>
+    [Fact]
+    public async Task ABadRequestOnAnUpdateThatSentContentIsNotRetried()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadRequest, """{"error":{"message":"Task content is blank."}}""");
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestTaskAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                503,
+                Workspace,
+                content: "Clamp the upper bound too.",
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("Task content is blank.", exception.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task AnEmptyTaskUpdateIsRefusedBeforeAnyRequest()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestTaskAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                503,
+                Workspace,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("Nothing to update", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task AnUnknownTaskStateIsRejectedWithBothStates()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestTaskAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                503,
+                Workspace,
+                state: "DONE",
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("RESOLVED or UNRESOLVED", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ATaskIdMustBePositive()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestTaskAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                0,
+                Workspace,
+                state: "RESOLVED",
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("taskId must be 1 or greater", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Comment resolution
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ResolvingACommentPostsToResolveAndReportsWhoDidIt()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CommentResolution);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.ResolvePullRequestCommentAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            1001,
+            resolved: true,
+            Workspace,
+            TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.EndsWith(
+            "/pullrequests/42/comments/1001/resolve",
+            request.Uri!.AbsolutePath,
+            StringComparison.Ordinal);
+
+        Assert.Equal(1001, result.CommentId);
+        Assert.True(result.Resolved);
+        Assert.Equal("Ada Lovelace", result.ResolvedBy?.Name);
+        Assert.Equal("{11111111-2222-3333-4444-555555555555}", result.ResolvedBy?.Uuid);
+        Assert.NotNull(result.ResolvedOn);
+    }
+
+    [Fact]
+    public async Task ReopeningACommentDeletesTheResolution()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.NoContent);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.ResolvePullRequestCommentAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            1001,
+            resolved: false,
+            Workspace,
+            TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.EndsWith(
+            "/pullrequests/42/comments/1001/resolve",
+            request.Uri!.AbsolutePath,
+            StringComparison.Ordinal);
+
+        Assert.Equal(1001, result.CommentId);
+        Assert.False(result.Resolved);
+
+        // The DELETE answers 204 with no body, so there is nothing to echo — and the keys are
+        // absent rather than present and null.
+        var json = JsonSerializer.Serialize(result, BitbucketToolJsonContext.Default.CommentResolutionResult);
+        Assert.DoesNotContain("null", json, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The tool is annotated idempotent, which it only is because these two are swallowed: Bitbucket
+    /// answers 409 to resolving a resolved thread and 404 to reopening an open one, and in both
+    /// cases the state the caller asked for is the state it is in.
+    /// </summary>
+    [Theory]
+    [InlineData(true, HttpStatusCode.Conflict)]
+    [InlineData(false, HttpStatusCode.NotFound)]
+    public async Task AskingForTheStateAThreadIsAlreadyInIsNotAnError(bool resolved, HttpStatusCode status)
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(status);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.ResolvePullRequestCommentAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            1001,
+            resolved,
+            Workspace,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(resolved, result.Resolved);
+        Assert.Null(result.ResolvedBy);
+    }
+
+    /// <summary>Tolerating the already-in-that-state answer must not become tolerating a refusal.</summary>
+    [Fact]
+    public async Task AResolveThatBitbucketRefusesIsStillReported()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.Forbidden);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.ResolvePullRequestCommentAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                1001,
+                resolved: true,
+                Workspace,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("403 Forbidden", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACommentIdMustBePositive()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.ResolvePullRequestCommentAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                0,
+                resolved: true,
+                Workspace,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("commentId must be 1 or greater", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
     }
 
     // ---------------------------------------------------------------------------------------
