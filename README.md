@@ -481,6 +481,33 @@ spend their budget on:
   already encoded in it, so the other arguments are ignored when a cursor is passed.
 - **Reviewers are UUIDs**, in braced form, read from `listDefaultReviewers` or `getPullRequest`.
 
+## Agent skill
+
+The workflow above is also shipped as an [Agent Skill](https://agentskills.io) — the open
+`SKILL.md` format most coding agents now read — at
+[`.claude/skills/bitbucket-pull-requests/SKILL.md`](.claude/skills/bitbucket-pull-requests/SKILL.md).
+
+The server already teaches its own conventions: the tool schemas and the `initialize` instructions
+arrive in every session. What they cannot teach is the *order* — diffstat before diff content,
+build statuses before a merge, the duplicate check before opening a pull request — because each
+schema only describes its own tool. That, plus the recovery moves (555, an ambiguous `codeSnippet`,
+403, 429) and when to ask local git instead of spending an API call, is what the skill holds. Only
+its one-paragraph description is always in context; the body loads when a Bitbucket task actually
+starts.
+
+There is one canonical copy, in this repository. How to wire it up:
+
+| Tool | What to do |
+|---|---|
+| **Claude Code** | Nothing, inside a checkout of this repository — `.claude/skills/` is loaded as a project skill. To use it anywhere else, copy the `bitbucket-pull-requests` directory into `~/.claude/skills/`. |
+| **Cursor**, **VS Code / GitHub Copilot** | Both also read `.claude/skills/`; copy the directory into your project's `.claude/skills/` or your user-level one (`~/.claude/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`). |
+| **OpenAI Codex**, **Gemini CLI** | These read `.agents/skills/` (Gemini also `.gemini/skills/`). Copy the `bitbucket-pull-requests` directory there — `.agents/skills/bitbucket-pull-requests/SKILL.md`. |
+| **Anything else** | Point it at the file however it loads skills or instructions. The frontmatter uses only the six fields the Agent Skills spec defines, so it also uploads to claude.ai and the Skills API unchanged. |
+
+The skill is checked against the server on every build: a test cross-references every tool it names
+against the real tool inventory, in both directions, so it cannot name a tool that does not exist
+and cannot quietly omit one that does.
+
 ## Troubleshooting
 
 Start with `bitbucket-mcp status`: it prints which credential would win, the exact callback URL

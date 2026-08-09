@@ -43,6 +43,13 @@ Initial release.
   against the diff, with ambiguous or missing matches reported instead of guessed.
 - Errors are translated into instructions: missing scopes, an API token sent as Bearer instead of
   Basic, merge conflicts, rate limits and diff-too-large all name the next call to make.
+- An Agent Skill ships with the repository at
+  `.claude/skills/bitbucket-pull-requests/SKILL.md`, in the open `SKILL.md` format: the review,
+  create and merge playbooks — the call *order* no single tool schema can describe — plus the
+  recovery moves and when to ask local git instead. Claude Code loads it as a project skill from a
+  checkout, Cursor and VS Code read the same path, and other tools are pointed at the one canonical
+  copy rather than given a second. `AgentSkillTests` cross-checks every tool it names against the
+  reflected inventory in both directions, so it can neither invent a tool nor silently omit one.
 - Native AOT single binary for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64, published
   from a four-package runtime dependency tree.
 - Also on nuget.org as the `bitbucket-mcp` .NET tool package, so `dnx bitbucket-mcp@1.0.0 --yes`

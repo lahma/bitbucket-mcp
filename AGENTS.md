@@ -69,8 +69,9 @@ writes must set it explicitly `false`. Never call `WithToolsFromAssembly()` (IL2
 
 The design's tool inventory, in full. `ToolInventoryTests` asserts this set of names and every one
 of these four flags against what an MCP client actually receives, and `Build.cs`'s
-`ExpectedToolNames` asserts the names again over a real `tools/list`. **Adding a tool means editing
-this table, that test and that array** — all three, or the build fails.
+`ExpectedToolNames` asserts the names again over a real `tools/list`, and `AgentSkillTests` asserts
+that the shipped skill names it too. **Adding a tool means editing this table, that test, that array
+and the skill** — all four, or the build fails.
 
 `Destructive` is blank on the read tools deliberately: `ReadOnly` already says they change nothing,
 so the SDK omits the hint and the test asserts its *absence*. On a write tool it is never blank —
@@ -108,6 +109,30 @@ Two of those rows are judgement calls rather than readings of the API:
   was never resolved, and both are swallowed because the caller asked for an end state and it is
   already in place. The same shape as `setPullRequestReviewStatus`'s `UNAPPROVED`.
 
+## Agent skill
+
+`.claude/skills/bitbucket-pull-requests/SKILL.md` is an [Agent Skill](https://agentskills.io)
+shipped with the repository. It is the **only** copy — there is no second one under `.agents/` or
+anywhere else; consumers whose tool looks elsewhere are pointed at this path from `README.md`.
+`.claude/skills/` is the location Claude Code loads as a project skill from a checkout, and the one
+Cursor and VS Code / Copilot also read; Codex and Gemini CLI read `.agents/skills/` only, so their
+users copy the directory across.
+
+It holds what neither `ServerInstructions` nor a tool `[Description]` can, because both are scoped
+to one call: the **order** the calls go in (diffstat before diff content, statuses before a merge,
+the deduplication check before a create), the recovery moves (555, an ambiguous `codeSnippet`, 403,
+429), and when *not* to call the server at all because local git already knows. It must not restate
+the schema or the README — the schema arrives with every session anyway, and the README is for
+humans.
+
+The division of budget is the point. `ServerInstructions` is paid by every session that attaches
+the server, which is why it stays at about ten lines; the skill's body is paid only by a session
+that actually starts Bitbucket work, and its always-loaded part is the frontmatter `description`
+alone. Guidance that only matters mid-workflow belongs in the skill; guidance a client needs before
+the first call belongs in `ServerInstructions`.
+
+`AgentSkillTests` is what stops it drifting — see *Testing*.
+
 ## Package budget
 
 Complete, as of the initial implementation. Versions are centrally pinned in
@@ -133,6 +158,8 @@ transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and n
 ## Layout
 
 ```
+.claude/skills/             The shipped Agent Skill (one canonical copy; AgentSkillTests keeps its
+                            tool references in step with the inventory)
 .mcp/server.json            MCP server manifest (D17), packed into the NuGet package at
                             /.mcp/server.json; its version must match CHANGELOG.md (test-enforced)
 src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-mcp
@@ -213,10 +240,22 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   `Idempotent` / `OpenWorld` flags, against *Tool table* above — plus a `[Description]` on every
   tool method and every non-injected parameter. `Destructive` defaults to *true* in the SDK, so a
   new non-destructive write tool fails this test until it says so explicitly. A new tool has to be
-  added in three places: that table, `ToolInventoryTests.ExpectedToolNames`, and `Build.cs`'s
-  `ExpectedToolNames` (which `SmokeTest` checks against a live `tools/list`).
+  added in four places: that table, `ToolInventoryTests.ExpectedToolNames`, `Build.cs`'s
+  `ExpectedToolNames` (which `SmokeTest` checks against a live `tools/list`) and the shipped skill
+  (next bullet).
 - **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
   outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
+- **The shipped skill names the tools that exist, and all of them.** `AgentSkillTests` reads
+  `.claude/skills/bitbucket-pull-requests/SKILL.md` (the same root walk `NoStdoutWritesTest` uses)
+  and cross-checks every backticked tool-shaped identifier against the reflected inventory, in both
+  directions: a name no tool answers to fails, and so does a tool the skill never mentions. Tool
+  *parameter* names are excluded by reflection, not by a list, so `mergeStrategy` does not read as a
+  missing tool. Nothing else loads that file, so without this it would keep advertising an older
+  surface — the inventory grew from ten tools to sixteen during development, and a skill written
+  before that would still have read as correct. It is therefore a **fourth** place a new tool has to
+  be added, after the *Tool table*, `ToolInventoryTests` and `Build.cs`. The frontmatter is checked
+  too: `name` must equal the directory name and satisfy the Agent Skills spec's charset, and
+  `description` must be present and within 1024 characters.
 - **`.mcp/server.json` agrees with the version authority.** `McpServerManifestTests` reads the
   checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root (the same
   root walk `NoStdoutWritesTest` uses) and asserts the manifest's `version` and its NuGet entry's
