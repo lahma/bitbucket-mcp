@@ -27,6 +27,8 @@
         "Clean",
         "Compile",
         "CreateGitHubRelease",
+        "Pack",
+        "Publish",
         "PublishAot",
         "Restore",
         "SmokeTest",
@@ -125,6 +127,10 @@
         "IgnoreFailedSources": {
           "type": "boolean",
           "description": "Ignore unreachable sources during Restore"
+        },
+        "NuGetUser": {
+          "type": "string",
+          "description": "nuget.org profile name of the account that owns the trusted publishing policy (env: NUGET_USER). Public information, not a secret"
         },
         "Runtime": {
           "type": "string",

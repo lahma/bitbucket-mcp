@@ -104,6 +104,40 @@ partial class Build : FalloutBuild,
 
     ReleaseNotes LatestReleaseNotes { get; set; }
 
+    /// <summary>True when this build is running for a <c>v*</c> tag - i.e. it is a release build.</summary>
+    /// <remarks>
+    /// Fallout's own repositories derive this from <c>GitRepository.Tags</c> because there the tag
+    /// <em>is</em> the version. Here CHANGELOG.md is the version authority and the tag only has to
+    /// agree with it, so on GitHub Actions the ref the run was triggered for is the authoritative
+    /// answer: <c>GITHUB_REF_NAME</c> is the tag name on a tag push, and it is what
+    /// <see cref="AssertReleaseTagMatchesChangelogVersion"/> compares against anyway. Off CI it
+    /// falls back to a v* tag pointing at HEAD, so the gate can be exercised locally.
+    /// </remarks>
+    bool IsTaggedBuild => VersionTag != null;
+
+    /// <summary>The <c>v*</c> tag this build is running for, or <c>null</c> if it is not a tag build.</summary>
+    string VersionTag
+    {
+        get
+        {
+            if (GitHubActions.Instance == null)
+            {
+                return ((IHasGitRepository)this).GitRepository?.Tags.FirstOrDefault(IsVersionTag);
+            }
+
+            // GITHUB_REF_TYPE distinguishes a tag push from a branch push, but it is only consulted
+            // when it is actually set, so the gate stays exercisable with GITHUB_REF_NAME alone.
+            var refType = Environment.GetEnvironmentVariable("GITHUB_REF_TYPE");
+            var refName = Environment.GetEnvironmentVariable("GITHUB_REF_NAME");
+
+            return refType is null or "tag" && IsVersionTag(refName) ? refName : null;
+        }
+    }
+
+    /// <summary>A version tag is <c>v</c> followed by a digit - so a <c>vnext</c> branch is not one.</summary>
+    static bool IsVersionTag(string value) =>
+        value?.StartsWith('v') == true && value.Length > 1 && char.IsAsciiDigit(value[1]);
+
     protected override void OnBuildInitialized()
     {
         base.OnBuildInitialized();

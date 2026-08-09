@@ -9,6 +9,11 @@
 # Action majors are pinned to match the generated build.yml (checkout@v7, setup-dotnet@v6);
 # upload-artifact@v7 and download-artifact@v8 are the current majors and are the matching pair
 # (v8 of the downloader exists to understand v7's direct uploads).
+#
+# Binaries and the GitHub Release only. The nuget.org push (D17) lives in the generated publish.yml,
+# which the same tag triggers independently - a nuget.org outage must not be able to hold up a
+# release, and the trusted publishing policy names one workflow file, which is that one and not
+# this one.
 
 name: release
 

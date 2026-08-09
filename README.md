@@ -38,6 +38,13 @@ comment.
 
 ## Install
 
+Two channels. The **Native AOT binary is the recommended one** — self-contained, nothing to
+install, roughly ten milliseconds to start. The
+[NuGet package](https://www.nuget.org/packages/bitbucket-mcp) is the convenience one: no download
+step, at the cost of needing the .NET 10 SDK and a JIT startup.
+
+### Native AOT binary (recommended)
+
 Download the archive for your platform from
 [GitHub Releases](https://github.com/lahma/bitbucket-mcp/releases) and extract it. Each archive is
 named `bitbucket-mcp-{version}-{rid}` and contains the executable, `LICENSE` and this `README.md`.
@@ -66,6 +73,48 @@ bitbucket-mcp login      Authenticate with Bitbucket via the OAuth browser flow.
 bitbucket-mcp logout     Delete the cached OAuth tokens.
 bitbucket-mcp status     Show the current authentication status.
 ```
+
+### NuGet package (`dnx`)
+
+The same server is published to nuget.org as
+[`bitbucket-mcp`](https://www.nuget.org/packages/bitbucket-mcp), a .NET tool package carrying the
+`McpServer` package type. `dnx` — part of the .NET 10 SDK — downloads and runs it in one step, so
+there is nothing to install and nothing to keep up to date by hand:
+
+```bash
+dnx bitbucket-mcp@1.0.0 --yes status
+```
+
+`--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
+to the server, so `login`, `logout` and `status` work exactly as they do on the binary. With no
+trailing verb the server speaks MCP over stdio, which is how a client should launch it:
+
+```json
+{
+  "servers": {
+    "bitbucket": {
+      "type": "stdio",
+      "command": "dnx",
+      "args": ["bitbucket-mcp@1.0.0", "--yes"],
+      "env": {
+        "BITBUCKET_OAUTH_KEY": "...",
+        "BITBUCKET_OAUTH_SECRET": "..."
+      }
+    }
+  }
+}
+```
+
+Pin the version (`@1.0.0`) rather than floating: an MCP server is something an agent runs on your
+behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
+needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
+missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
+also has to download the package.
+
+Releases are pushed to nuget.org by `.github/workflows/publish.yml`, a workflow only a `v*.*.*` tag
+can start, using [trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing):
+the workflow exchanges its GitHub OIDC token for an API key that lives minutes. There is no NuGet
+API key stored in this repository, so there is none to leak.
 
 ## Authentication
 
@@ -514,11 +563,13 @@ cd bitbucket-mcp
 
 ./build.sh Test           # restore, compile, run the tests
 ./build.sh SmokeTest      # AOT publish + a real stdio JSON-RPC handshake against the binary
+./build.sh Pack           # the NuGet tool package, into artifacts/packages
 ```
 
 ```powershell
 .\build.ps1 Test
 .\build.ps1 SmokeTest
+.\build.ps1 Pack
 ```
 
 The orchestrator is [Fallout](https://fallout.build); `build.ps1` / `build.sh` bootstrap the CLI
@@ -531,7 +582,9 @@ dotnet fallout PublishAot --runtime linux-arm64
 
 The executable lands in `artifacts/publish/{rid}/` and the release archive in
 `artifacts/archives/`. `CHANGELOG.md` is the version authority — the build parses its top section
-and stamps that version into the binary.
+and stamps that version into the binary, the package and `.mcp/server.json` (a test fails if the
+manifest falls behind). Note that `PublishAot` applies only when a runtime identifier is given:
+`Pack` deliberately produces the portable, framework-dependent tool half from the same project.
 
 ## Contributing
 

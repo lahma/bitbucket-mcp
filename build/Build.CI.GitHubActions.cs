@@ -20,6 +20,32 @@ using Fallout.Components;
     ConcurrencyCancelInProgress = true,
     InvokedTargets = [nameof(ITest.Test), nameof(SmokeTest)],
     PublishArtifacts = false)]
+// .github/workflows/publish.yml is generated from this second attribute (same hard rule 2 - never
+// hand-edit the YAML).
+//
+// The NuGet leg (D17) lives in its own workflow file because a nuget.org trusted publishing policy
+// is scoped by workflow *file name* and the nuget.org UI offers no branch or tag filter. Keeping it
+// out of build.yml is what stops an ordinary push from running a workflow that could mint a
+// publishing key: only this file can, and only a v*.*.* tag can trigger it.
+//
+// No OnPushIncludePaths/ExcludePaths: a path filter alongside `tags:` evaluates over the tag
+// commit's diff and can silently skip the release run. One Ubuntu job, because more jobs would mean
+// more OIDC exchanges racing for the same one-key-per-30s rate limit.
+[GitHubActions(
+    "publish",
+    GitHubActionsImage.UbuntuLatest,
+    FetchDepth = 0,
+    OnPushTags = ["v*.*.*"],
+    CacheKeyFiles = [],
+    InvokedTargets = [nameof(ICompile.Compile), nameof(ITest.Test), nameof(Pack), nameof(Publish)],
+    PublishArtifacts = true,
+    // The nuget.org profile name that created the trusted publishing policy. Public information and
+    // deliberately not a secret - it goes verbatim into the token-exchange request body, and a
+    // secret would be masked out of exactly the error message that names it.
+    Env = ["NUGET_USER: lahma"],
+    EnvironmentName = "nuget",
+    ReadPermissions = [GitHubActionsPermissions.Contents],
+    WritePermissions = [GitHubActionsPermissions.IdToken])]
 partial class Build
 {
 }

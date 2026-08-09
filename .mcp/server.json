@@ -1,0 +1,60 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.lahma/bitbucket-mcp",
+  "description": "Bitbucket Cloud pull requests over MCP: list, read, diff, comment, review, merge and decline.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/lahma/bitbucket-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "nuget",
+      "registryBaseUrl": "https://api.nuget.org",
+      "identifier": "bitbucket-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [],
+      "environmentVariables": [
+        {
+          "name": "BITBUCKET_OAUTH_KEY",
+          "description": "OAuth consumer key of your own Bitbucket Cloud OAuth consumer. Together with BITBUCKET_OAUTH_SECRET this enables the browser login flow.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "BITBUCKET_OAUTH_SECRET",
+          "description": "OAuth consumer secret matching BITBUCKET_OAUTH_KEY.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "BITBUCKET_ACCESS_TOKEN",
+          "description": "Bitbucket Cloud access token sent as a Bearer credential. Takes precedence over every other credential and skips the OAuth flow.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "BITBUCKET_EMAIL",
+          "description": "Atlassian account e-mail, used with BITBUCKET_API_TOKEN as Basic credentials.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "BITBUCKET_API_TOKEN",
+          "description": "Atlassian API token, used with BITBUCKET_EMAIL as Basic credentials.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "BITBUCKET_DEFAULT_WORKSPACE",
+          "description": "Workspace slug used when a tool call omits the workspace argument.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

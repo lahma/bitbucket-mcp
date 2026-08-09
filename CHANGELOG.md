@@ -23,3 +23,7 @@ Initial release.
   Basic, merge conflicts, rate limits and diff-too-large all name the next call to make.
 - Native AOT single binary for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64, published
   from a four-package runtime dependency tree.
+- Also on nuget.org as the `bitbucket-mcp` .NET tool package, so `dnx bitbucket-mcp@1.0.0 --yes`
+  runs the server without a download step. It is pushed by trusted publishing — a tag-triggered
+  workflow exchanges its GitHub OIDC token for an API key that lives minutes — so no NuGet API key
+  is stored anywhere. The Native AOT binaries remain the recommended way to run the server.

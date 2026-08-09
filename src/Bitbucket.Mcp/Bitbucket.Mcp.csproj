@@ -11,11 +11,57 @@
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
     <StripSymbols>true</StripSymbols>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
-    <IsPackable>false</IsPackable>
     <!-- Required for IDE0005 (unnecessary usings) to run under EnforceCodeStyleInBuild;
          CS1591 is silenced centrally. See https://github.com/dotnet/roslyn/issues/41640. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
+
+  <!-- D17: the NuGet convenience channel. `dotnet pack` produces a framework-dependent .NET tool
+       package (`dnx bitbucket-mcp`); the Native AOT single binary published to GitHub Releases
+       stays the recommended way to run the server. PackageType McpServer is what nuget.org filters
+       on to show the MCP tab and generate client configuration; PackAsTool already makes it a tool
+       package, so DotnetTool is deliberately NOT listed alongside it (the mcpserver template does
+       the same). -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <PackageType>McpServer</PackageType>
+    <PackageId>bitbucket-mcp</PackageId>
+    <ToolCommandName>bitbucket-mcp</ToolCommandName>
+    <!-- The tool half is framework-dependent, so it must keep working on a runtime newer than the
+         one it was built against. -->
+    <RollForward>Major</RollForward>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>mcp;mcp-server;model-context-protocol;bitbucket;bitbucket-cloud;pull-request;code-review;ai;stdio</PackageTags>
+    <Description>Model Context Protocol server for Bitbucket Cloud pull requests - list, read, diff, comment, review, merge and decline - with OAuth 2.0 browser login and a deliberately small, auditable dependency tree. Native AOT binaries are published to GitHub Releases; this package is the `dnx bitbucket-mcp` convenience channel.</Description>
+  </PropertyGroup>
+
+  <!-- PackTool.targets packs $(PublishDir), so `dotnet pack` runs a publish of this project. Left
+       alone that publish would inherit PublishAot=true above and fail for want of a RuntimeIdentifier
+       (D9 keeps RIDs out of the csproj). The AOT publish always passes -r, so keying the property off
+       RuntimeIdentifier gives the release path AOT and the pack path a portable IL tool. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
+    <PublishAot>false</PublishAot>
+  </PropertyGroup>
+
+  <!-- The three analyzers above are what turn an AOT-hostile line of code (IL2026, IL3050) into a
+       build error under TreatWarningsAsErrors. The SDK derives them from PublishAot, so leaving
+       them implicit would switch them off for every RID-less build - which is every `dotnet build`,
+       every `dotnet test` and every IDE session. Stated explicitly, they no longer depend on it. -->
+  <PropertyGroup>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Packed into the package root as /.mcp/server.json, which is where nuget.org looks for the
+         MCP server manifest. Both files live at the repository root - one server manifest per
+         repository, and the same README.md the AOT archives ship - so they are referenced from
+         there rather than duplicated under src/. -->
+    <None Include="../../.mcp/server.json" Pack="true" PackagePath="/.mcp/" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
   <!-- Deliberately absent (D9/D10): RuntimeIdentifiers (would pull ILCompiler packs per RID on
        every restore - the RID reaches publish via -r), PublishSingleFile (ignored under AOT) and
        SelfContained (implied by PublishAot). -->
