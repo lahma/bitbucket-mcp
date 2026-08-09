@@ -19,7 +19,7 @@ Initial release.
   always marked inline and reported with continuation guidance.
 - Inline comments anchored by `codeSnippet` — the line's text copied out of the diff — resolved
   against the diff, with ambiguous or missing matches reported instead of guessed.
-- Errors are translated into instructions: missing scopes, the scoped-token 403 workaround, merge
-  conflicts, rate limits and diff-too-large all name the next call to make.
+- Errors are translated into instructions: missing scopes, an API token sent as Bearer instead of
+  Basic, merge conflicts, rate limits and diff-too-large all name the next call to make.
 - Native AOT single binary for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64, published
   from a four-package runtime dependency tree.

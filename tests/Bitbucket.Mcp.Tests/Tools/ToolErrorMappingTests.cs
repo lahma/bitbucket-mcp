@@ -93,17 +93,19 @@ public class ToolErrorMappingTests
     }
 
     /// <summary>
-    /// R6: scoped Atlassian API tokens answer 403 on some pull request writes even with the right
-    /// scopes. The message has to name both possibilities, because only one of them is fixable by
-    /// changing scopes.
+    /// A 403 has three plausible causes and the message has to name all three, because only the
+    /// first is fixable by changing scopes: a missing scope (read and write do not imply each
+    /// other), an API token sent as Bearer rather than Basic, or an account without write access.
+    /// Both scope vocabularies appear — the OAuth consumer one and the <c>:bitbucket</c>-suffixed
+    /// API token one — since the credential in use decides which applies.
     /// </summary>
     [Fact]
-    public async Task ForbiddenListsTheRequiredScopesAndTheKnownTokenTypeBug()
+    public async Task ForbiddenListsBothScopeVocabulariesAndTheAuthSchemeToCheck()
     {
         using var handler = new StubHttpMessageHandler();
         handler.Enqueue(
             HttpStatusCode.Forbidden,
-            """{"type":"error","error":{"message":"This endpoint does not support token-based authentication"}}""");
+            """{"type":"error","error":{"message":"Your credentials lack one or more required privilege scopes"}}""");
 
         using var client = ToolTestHost.CreateClient(handler);
 
@@ -120,8 +122,14 @@ public class ToolErrorMappingTests
         Assert.Contains("403", exception.Message, StringComparison.Ordinal);
         Assert.Contains("pullrequest:write", exception.Message, StringComparison.Ordinal);
         Assert.Contains("repository:write", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("token-based authentication", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("bitbucket-mcp login", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("read:pullrequest:bitbucket", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("write:pullrequest:bitbucket", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("BITBUCKET_EMAIL + BITBUCKET_API_TOKEN", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("write access", exception.Message, StringComparison.Ordinal);
+
+        // The endpoint-limitation folklore is gone: every pull request endpoint this server calls
+        // accepts an API token, so the message must not send anyone back to OAuth to work around it.
+        Assert.DoesNotContain("token-based authentication", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

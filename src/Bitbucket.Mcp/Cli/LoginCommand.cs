@@ -50,8 +50,9 @@ internal static class LoginCommand
 
         if (staticCredential is not null)
         {
-            // Not an error: signing in is still useful (OAuth avoids the scoped-token 403 on some PR
-            // writes), but the server would ignore the result while the variable is set.
+            // Not an error: signing in is still useful (the cached grant renews itself, where an
+            // environment token has to be rotated by hand), but the server would ignore the result
+            // while the variable is set.
             Console.Out.WriteLine(
                 $"Note: {staticCredential.Describe()} takes precedence over OAuth, so the server will not use these "
                 + "tokens until that variable is unset.");
@@ -135,9 +136,13 @@ internal static class LoginCommand
         Console.Error.WriteLine("  BITBUCKET_OAUTH_KEY      the key of your Bitbucket OAuth consumer");
         Console.Error.WriteLine("  BITBUCKET_OAUTH_SECRET   its secret");
         Console.Error.WriteLine();
-        Console.Error.WriteLine("Create the consumer under Bitbucket > Workspace settings > OAuth consumers:");
+        Console.Error.WriteLine(
+            "Create the consumer in your *workspace* settings - not your personal/account settings, and not on "
+            + "admin.atlassian.com:");
+        Console.Error.WriteLine("  https://bitbucket.org/{workspace}/workspace/settings/api");
+        Console.Error.WriteLine("  (Apps and features > OAuth consumers > Add consumer; {workspace} is the URL slug.)");
         Console.Error.WriteLine($"  Callback URL   {InteractiveAuthenticator.BuildRedirectUri(options)}");
-        Console.Error.WriteLine("  Permissions    Pull requests: Read+Write, Repositories: Read+Write");
+        Console.Error.WriteLine("  Permissions    Account: Read, Repositories: Read+Write, Pull requests: Read+Write");
         Console.Error.WriteLine("See the \"OAuth consumer setup\" section of the README for the walkthrough.");
         Console.Error.WriteLine();
         Console.Error.WriteLine(

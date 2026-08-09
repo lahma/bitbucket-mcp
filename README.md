@@ -83,13 +83,29 @@ tells you to create one, it is out of date.
 
 ### OAuth consumer setup
 
-Recommended. It is the one mechanism that avoids the scoped-token 403 described under
-[Troubleshooting](#troubleshooting), and the tokens it produces are refreshed silently.
+Recommended: the tokens it produces are refreshed silently, so nothing has to be rotated by hand.
 
-1. Sign in to [bitbucket.org](https://bitbucket.org) and open the workspace the repositories live
-   in.
-2. **Settings** → **OAuth consumers** (under *Apps and features*) → **Add consumer**.
-3. Fill in:
+OAuth consumers live in **workspace settings**. Not in your personal or account settings, and not
+on admin.atlassian.com — those are the two places people look first, and the page is in neither.
+Every plan has it, Free included. The direct URL:
+
+```
+https://bitbucket.org/{workspace}/workspace/settings/api
+```
+
+`{workspace}` is the workspace **slug** — the first segment of a repository URL,
+`bitbucket.org/{workspace}/{repository}` — not the workspace's display name.
+
+To navigate there instead: click your **avatar** and pick the workspace the repositories live in,
+under *Recent workspaces* or *All workspaces* → the **Settings** cog in the top navigation →
+**Workspace settings**, which is the entry under the *Bitbucket Administration* heading in that
+menu, not the personal settings above it → **Apps and features** in the sidebar → **OAuth
+consumers**.
+
+Then:
+
+1. **Add consumer**.
+2. Fill in:
    - **Name**: anything, for example `bitbucket-mcp`.
    - **Callback URL**: `http://127.0.0.1:33418/callback` — exactly this string. Bitbucket compares
      it character for character against the redirect the server sends, and a mismatch is the most
@@ -97,11 +113,12 @@ Recommended. It is the one mechanism that avoids the scoped-token 403 described 
      and register the port you pick.)
    - Tick **This is a private consumer**. The server authenticates with the consumer secret at the
      token endpoint, which is what a private consumer means.
-4. Under **Permissions**, tick:
-   - **Pull requests**: Read and Write
+3. Under **Permissions**, tick:
+   - **Account**: Read
    - **Repositories**: Read and Write
-5. **Save**, then expand the new consumer to read its **Key** and **Secret**.
-6. Put them in the environment:
+   - **Pull requests**: Read and Write
+4. **Save**, then expand the new consumer to read its **Key** and **Secret**.
+5. Put them in the environment:
 
    ```bash
    export BITBUCKET_OAUTH_KEY=...
@@ -113,7 +130,7 @@ Recommended. It is the one mechanism that avoids the scoped-token 403 described 
    $env:BITBUCKET_OAUTH_SECRET = '...'
    ```
 
-7. Sign in once:
+6. Sign in once:
 
    ```
    bitbucket-mcp login
@@ -133,6 +150,31 @@ If an MCP client starts the server before anyone has signed in, the first tool c
 browser itself and blocks up to `BITBUCKET_MCP_AUTH_TIMEOUT_SECONDS`. Running `login` up front is
 what keeps that from happening mid-conversation.
 
+#### Can't see OAuth consumers?
+
+Three things account for almost every case, in the order they are worth checking:
+
+1. **You are in personal settings, not workspace settings.** The avatar menu offers both, one under
+   each heading, and OAuth consumers have not lived under the personal one for years. *Apps and
+   features* → *OAuth consumers* only exists under **Workspace settings**. Going straight to
+   `https://bitbucket.org/{workspace}/workspace/settings/api` sidesteps the choice.
+
+2. **The workspace is a legacy personal workspace** — one that was auto-created for you and is
+   named after your username. In those, *Apps and features* is shown **only to the workspace
+   owner**: a user with the Admin role does not see it either, which is what makes this one
+   confusing on a shared workspace. Sign in as the owner, or create the consumer in a regular
+   workspace. Atlassian documents it as
+   [Apps and features settings are missing for admins in personal workspace](https://support.atlassian.com/bitbucket-cloud/kb/apps-and-features-settings-are-missing-for-admins-in-personal-workspace/)
+   (BCLOUD-20342).
+
+3. **You have no workspace at all.** Personal workspaces are no longer created automatically at
+   signup, and an account without one has no workspace settings to open. Create a workspace at
+   admin.atlassian.com → **Atlassian apps** → **Add app** → **Bitbucket**, which since early 2026 is
+   where Bitbucket workspaces come from.
+
+If none of that helps, skip OAuth: an [Atlassian API token](#tokens) supports every operation this
+server performs, writes included, and needs no consumer.
+
 ### Tokens
 
 For headless machines, CI, or when you would rather not create a consumer.
@@ -146,17 +188,35 @@ export BITBUCKET_ACCESS_TOKEN=...
 ```
 
 **Atlassian API token** — created at
-[id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens),
-paired with the account's email:
+[id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
+Use the **Create API token with scopes** button. The plain *Create API token* button next to it
+produces an unscoped token, and an unscoped token does not work against the Bitbucket API at all.
+Choose **Bitbucket** as the app, then grant all four of these scopes:
+
+- `read:repository:bitbucket`
+- `write:repository:bitbucket`
+- `read:pullrequest:bitbucket`
+- `write:pullrequest:bitbucket`
+
+The `:bitbucket` suffix is part of the scope id, not a description of it. The scopes do **not**
+imply one another: creating, updating, commenting on, approving, merging or declining a pull
+request needs `read:pullrequest:bitbucket` *and* `write:pullrequest:bitbucket`, and a write scope
+granted on its own answers 403. Scopes cannot be edited afterwards — a token with the wrong set has
+to be replaced.
+
+Pair the token with the account's email. It is a **Basic** credential —
+`base64(email:token)` — which is exactly what these two variables produce:
 
 ```bash
 export BITBUCKET_EMAIL=you@example.com
 export BITBUCKET_API_TOKEN=...
 ```
 
-A *scoped* API token needs `read:pullrequest`, `write:pullrequest`, `read:repository` and
-`write:repository`. Note that some Bitbucket pull-request writes reject scoped API tokens outright
-— see [Troubleshooting](#troubleshooting).
+Do **not** put an API token in `BITBUCKET_ACCESS_TOKEN`: that variable is sent as `Bearer`, and
+Bitbucket answers 401 *"Token is invalid, expired, or not supported for this endpoint"*. `Bearer` is
+for OAuth access tokens and for workspace, project and repository access tokens. With the four
+scopes above and Basic auth, an API token drives every operation this server performs, writes
+included.
 
 Tokens are read from the environment only. Nothing is cached, and `bitbucket-mcp login` is neither
 needed nor used in this mode.
@@ -337,12 +397,26 @@ spend their budget on:
 Start with `bitbucket-mcp status`: it prints which credential would win, the exact callback URL
 the server will use, the token cache path and what is in it — and none of the values.
 
-**403 with "this endpoint does not support token-based authentication".** A Bitbucket bug: some
-pull-request write endpoints reject *scoped* Atlassian API tokens even when the scopes are
-correct. OAuth is not affected. Set up an [OAuth consumer](#oauth-consumer-setup), run
-`bitbucket-mcp login`, unset `BITBUCKET_ACCESS_TOKEN` / `BITBUCKET_API_TOKEN` so OAuth is what the
-server picks, and retry. Other 403s mean a missing scope — the server needs `pullrequest`,
-`pullrequest:write`, `repository` and `repository:write`.
+**403 Forbidden on a pull-request write.** It is not an endpoint limitation. Every Bitbucket
+pull-request endpoint this server calls — create, update, comment, approve, request changes, merge,
+decline — accepts an Atlassian API token, and the old "this endpoint does not support token-based
+authentication" advice no longer applies. Check three things, in this order:
+
+1. **Both scopes, not just the write one.** The scopes do not imply each other, so a token holding
+   only `write:pullrequest:bitbucket` is a 403 on every pull-request write. The set is
+   `read:repository:bitbucket`, `write:repository:bitbucket`, `read:pullrequest:bitbucket` and
+   `write:pullrequest:bitbucket`; a token's scopes cannot be changed after it is created, so a
+   wrong set means a new token. The OAuth equivalent is the consumer's permissions — *Account:
+   Read*, *Repositories: Read and Write*, *Pull requests: Read and Write*, which is
+   `pullrequest`, `pullrequest:write`, `repository` and `repository:write` on the wire. After
+   widening a consumer's permissions, run `bitbucket-mcp logout` then `bitbucket-mcp login`: the
+   cached grant still carries the old scopes.
+2. **Basic, not Bearer.** An API token goes in `BITBUCKET_EMAIL` + `BITBUCKET_API_TOKEN`, which the
+   server sends as `Basic base64(email:token)`. The same token in `BITBUCKET_ACCESS_TOKEN` is sent
+   as `Bearer` and Bitbucket rejects it. `bitbucket-mcp status` prints which variable is in effect.
+3. **The account's own access.** Scopes cannot grant more than the account has: the user the
+   credential belongs to needs write access to the repository. A 403 that survives the first two
+   checks is usually this one.
 
 **HTTP 555, "diff too large".** Bitbucket refuses to build diffs beyond roughly 8,000 changed
 lines or 200 files, and retrying never helps. Call `getPullRequestDiff` with `mode="diffstat"`,
@@ -375,6 +449,12 @@ account).
 takes precedence over OAuth (`status` says which), or the cache was created with a different
 consumer key — the cache records a fingerprint of the key it was obtained with and ignores itself
 when it does not match. `bitbucket-mcp logout` followed by `bitbucket-mcp login` resets it.
+
+**OAuth stopped working after a few months away.** A Bitbucket refresh token that goes **three
+months unused** expires, and once it has, there is nothing left to renew silently — the grant has
+to be established again. Run `bitbucket-mcp login`. Nothing else needs changing: the consumer, its
+permissions and the environment variables are all still valid. Normal use never hits this, because
+every silent renewal counts as a use.
 
 **Nothing works and you want to see why.** `BITBUCKET_MCP_LOG_LEVEL=Debug`. All logging goes to
 stderr; MCP clients usually surface it in a server log pane.

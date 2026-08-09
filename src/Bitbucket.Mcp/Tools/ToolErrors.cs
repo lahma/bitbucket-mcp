@@ -48,6 +48,14 @@ internal static class ToolErrors
     private const string RequiredScopes = "pullrequest, pullrequest:write, repository, repository:write";
 
     /// <summary>
+    /// The same permissions as Atlassian API token scopes. A different vocabulary from
+    /// <see cref="RequiredScopes"/>: the <c>:bitbucket</c> suffix is part of the scope id, and a
+    /// token created without it (or without scopes at all) does not work against Bitbucket.
+    /// </summary>
+    private const string RequiredApiTokenScopes =
+        "read:repository:bitbucket, write:repository:bitbucket, read:pullrequest:bitbucket, write:pullrequest:bitbucket";
+
+    /// <summary>
     /// Bitbucket's non-standard status for "the diff is too big to generate". Not in
     /// <see cref="HttpStatusCode"/>, so it is matched numerically.
     /// </summary>
@@ -255,11 +263,13 @@ internal static class ToolErrors
         var message = new StringBuilder("Bitbucket refused this operation (403 Forbidden).");
         Append(message, detail);
 
-        message.Append("\nEither the token lacks a scope or the account lacks permission on ").Append(Target(context))
-            .Append(". This server's operations need these consumer scopes: ").Append(RequiredScopes).Append('.')
-            .Append("\nKnown Bitbucket bug: some pull request writes answer 403 with \"this endpoint does not ")
-            .Append("support token-based authentication\" even when the scopes are correct. Scoped Atlassian API ")
-            .Append("tokens hit it; OAuth does not — run `bitbucket-mcp login` and retry to work around it.");
+        message.Append("\nEither the credential lacks a scope or the account lacks write access to ")
+            .Append(Target(context))
+            .Append(". Scopes do not imply one another, so read and write are both needed for what this call ")
+            .Append("touches: OAuth consumer scopes ").Append(RequiredScopes)
+            .Append("; Atlassian API token scopes ").Append(RequiredApiTokenScopes).Append('.')
+            .Append("\nAn API token must also be sent as Basic, via BITBUCKET_EMAIL + BITBUCKET_API_TOKEN — in ")
+            .Append("BITBUCKET_ACCESS_TOKEN it goes out as Bearer, which Bitbucket rejects.");
 
         return message.ToString();
     }
