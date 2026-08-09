@@ -16,9 +16,11 @@ namespace Bitbucket.Mcp.Authentication;
 /// </para>
 /// <para>
 /// The returned header is applied per request, never on
-/// <see cref="HttpClient.DefaultRequestHeaders"/>: <c>SocketsHttpHandler</c> strips a per-request
-/// <c>Authorization</c> header on cross-host redirects, and that is exactly the behaviour we want
-/// when Bitbucket 302s a diff to a CDN host.
+/// <see cref="HttpClient.DefaultRequestHeaders"/>. <c>SocketsHttpHandler</c> strips a per-request
+/// <c>Authorization</c> header on <em>every</em> automatic redirect and does not re-apply a default
+/// one, so the HTTP pipeline turns automatic redirects off entirely and re-attaches this header per
+/// hop — and only for <c>https://api.bitbucket.org</c> (D16). Keeping the header off the client
+/// means nothing can leak by default if that ever changes.
 /// </para>
 /// </remarks>
 internal interface ICredentialProvider

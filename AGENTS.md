@@ -31,7 +31,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D15)
+## Design decisions (D1–D16)
 
 | # | Decision |
 |---|---|
@@ -50,6 +50,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D13 | **Confidential OAuth client** (key + secret, Basic auth at the token endpoint), no PKCE (unconfirmed for Bitbucket Cloud; leave an internal hook). The user creates their own consumer. |
 | D14 | Access-token lifetime always taken from `expires_in` (minus 60 s skew) — never hard-coded; Atlassian's docs contradict themselves (1 h vs 2 h). |
 | D15 | **`login` / `logout` / `status` CLI modes** on the same binary (argv dispatch, hand-rolled parsing); no args = stdio server. CLI mode may use stdout; server mode never. |
+| D16 | **Redirects are followed by hand, not by the transport.** `SocketsHttpHandler` strips the `Authorization` header on **all** automatic redirects, same-origin included, and does not re-apply a default header to the redirected request either (verified 2026-08-09 against live Bitbucket and a local echo server — the diff and diffstat endpoints `302` to another path on `api.bitbucket.org` whose target still needs the credential, so the redirected request came back `404`). The transport therefore sets `AllowAutoRedirect=false` and `AuthenticationHandler` follows redirects itself: `GET`/`HEAD` only (never replay a request with content), 301/302/303/307/308, at most 5 hops, relative `Location` resolved against the current URI, and the credential re-attached **only** when the target is `https` on `api.bitbucket.org` — a redirect anywhere else is followed anonymously. |
 
 Other locked choices worth restating: Bitbucket **app passwords are dead** (removed 2026-07-28) —
 never implement them. Tool names are **camelCase verbNoun** (`createPullRequest`) via

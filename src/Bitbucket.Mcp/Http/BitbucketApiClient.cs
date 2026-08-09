@@ -20,8 +20,8 @@ namespace Bitbucket.Mcp.Http;
 /// <para>
 /// The chain is <see cref="AuthenticationHandler"/> → <see cref="RetryHandler"/> →
 /// <see cref="SocketsHttpHandler"/>, built here rather than by DI so that the ordering — which is
-/// load-bearing for both the 401 refresh and the cross-host redirect behaviour — is visible in one
-/// place.
+/// load-bearing for the 401 refresh and for redirect following, both of which happen in the
+/// outermost handler — is visible in one place.
 /// </para>
 /// <para>
 /// Every response is deserialised straight from the response stream through
@@ -263,7 +263,8 @@ internal sealed class BitbucketApiClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         // Overrides the client-wide JSON default: this endpoint answers with text, after a 302 to
-        // another host. A request-level Accept header suppresses the default one entirely.
+        // another path on the API host. A request-level Accept header suppresses the default one
+        // entirely, and AuthenticationHandler carries it across the redirect.
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
 
         return await SendTextAsync(request, cancellationToken).ConfigureAwait(false);
@@ -480,11 +481,12 @@ internal sealed class BitbucketApiClient : IDisposable
 
     private static SocketsHttpHandler CreateTransport() => new()
     {
-        // Bitbucket answers the diff and diffstat endpoints with a 302 to a pre-signed URL on
-        // another host; following it is mandatory, and the credential is dropped on the way (which
-        // is why AuthenticationHandler never uses DefaultRequestHeaders).
-        AllowAutoRedirect = true,
-        MaxAutomaticRedirections = 5,
+        // Redirect following lives in AuthenticationHandler instead (D16). Bitbucket answers the
+        // diff and diffstat endpoints with a 302 to another path on api.bitbucket.org whose target
+        // still requires the credential, and SocketsHttpHandler strips the Authorization header on
+        // *every* automatic redirect — same-origin ones included. Following them here would send
+        // the second request unauthenticated, which Bitbucket answers with a 404.
+        AllowAutoRedirect = false,
         AutomaticDecompression = DecompressionMethods.All,
 
         // Bounded so a long-lived server eventually notices DNS changes and load-balancer moves.

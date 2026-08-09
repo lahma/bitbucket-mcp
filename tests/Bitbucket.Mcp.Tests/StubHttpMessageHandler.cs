@@ -9,8 +9,10 @@ namespace Bitbucket.Mcp.Tests;
 /// Responses are served from a FIFO queue of responders, falling back to
 /// <see cref="Fallback"/>; every request is recorded with its body captured eagerly,
 /// because <see cref="HttpClient"/> disposes request content after the send completes.
-/// Note: this replaces the innermost handler, so automatic 302 redirect following does
-/// not happen here — stub the final response directly.
+/// Note: this replaces the innermost handler, where automatic redirect following would have
+/// lived — but the production transport switches that off and <c>AuthenticationHandler</c>
+/// follows redirects itself (D16), so a stubbed 302 followed by a stubbed 200 exercises our
+/// own redirect code and both requests are recorded.
 /// </summary>
 internal sealed class StubHttpMessageHandler : HttpMessageHandler
 {
@@ -48,6 +50,17 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
             response.Content = new StringContent(body, Encoding.UTF8, mediaType);
         }
 
+        return response;
+    }
+
+    /// <summary>
+    /// A redirect response. <paramref name="location"/> may be relative, which is the form
+    /// Bitbucket actually sends.
+    /// </summary>
+    public static HttpResponseMessage CreateRedirect(HttpStatusCode statusCode, string location)
+    {
+        var response = new HttpResponseMessage(statusCode);
+        response.Headers.Location = new Uri(location, UriKind.RelativeOrAbsolute);
         return response;
     }
 

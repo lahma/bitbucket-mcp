@@ -490,9 +490,13 @@ stderr; MCP clients usually surface it in a server log pane.
   port, with no embedded credentials, under `/2.0/` — otherwise it is not a cursor. Nothing else
   is ever fetched with a live `Authorization` header attached.
 
-- **Credentials are per-request, never on the `HttpClient`.** `SocketsHttpHandler` strips
-  per-request authorization on a cross-host redirect, which is the behaviour we want; a default
-  request header would not be stripped.
+- **Credentials are per-request, and a redirect only keeps them inside Bitbucket.**
+  `SocketsHttpHandler` strips the `Authorization` header on *every* automatic redirect — including
+  a same-host one, which is exactly what Bitbucket's diff and diffstat endpoints answer with — so
+  automatic redirects are switched off and the pipeline follows them itself: `GET`/`HEAD` only, at
+  most five hops, and the credential is re-attached only when the target is `https` on
+  `api.bitbucket.org`. A redirect anywhere else is still followed, but as an anonymous request. The
+  header is never set on the `HttpClient` itself, so nothing can leak by default.
 
 - **The supply chain is four runtime packages**, all from Microsoft or the official MCP
   organisation, centrally pinned in `Directory.Packages.props` with transitive pinning on, and the

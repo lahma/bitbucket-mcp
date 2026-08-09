@@ -23,8 +23,11 @@ namespace Bitbucket.Mcp.Tests.Http;
 /// as if it had never been escaped.
 /// </para>
 /// <para>
-/// The stub replaces the innermost handler, so the <c>302</c> Bitbucket answers the diff endpoints
-/// with never happens here; the final response is stubbed directly.
+/// The stub replaces the innermost handler, but redirect following lives in
+/// <c>AuthenticationHandler</c> rather than in the transport (D16) — so a stubbed <c>302</c>
+/// followed by a stubbed <c>200</c> goes through the same code the diff endpoints go through in
+/// production. <see cref="AuthenticationHandlerTests"/> covers the hop itself; the two tests here
+/// check that the client surface comes out the other side with its result.
 /// </para>
 /// </remarks>
 public class BitbucketApiClientTests
@@ -419,6 +422,38 @@ public class BitbucketApiClientTests
         Assert.Equal("assets/logo (draft).png", page.Items[4].New?.Path);
     }
 
+    /// <summary>
+    /// The live bug this pipeline was fixed for: Bitbucket answers <c>…/diffstat</c> with a
+    /// <c>302</c> to another path on the same host, and the page only comes back if the redirected
+    /// request still carries the credential.
+    /// </summary>
+    [Fact]
+    public async Task GetDiffStatFollowsTheRedirectBitbucketAnswersWith()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => StubHttpMessageHandler.CreateRedirect(
+            HttpStatusCode.Found,
+            "/2.0/repositories/acme/widget-api/pullrequests/412/diffstat-content"));
+        stub.EnqueueJson(HttpFixtures.Read("http-diffstat-page.json"));
+
+        using var client = CreateClient(stub);
+
+        var page = await client.GetDiffStatAsync(
+            Workspace,
+            Repository,
+            412,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(5, page.Items.Count);
+        Assert.Equal(2, stub.Requests.Count);
+
+        Assert.Equal(
+            "/2.0/repositories/acme/widget-api/pullrequests/412/diffstat-content",
+            RequestUrl.Path(stub.Requests[1].Uri));
+
+        Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
+    }
+
     // ------------------------------------------------------------------- diff
 
     [Fact]
@@ -499,6 +534,38 @@ public class BitbucketApiClientTests
 
         Assert.Equal("0", RequestUrl.QueryValue(request.Uri, "context"));
         Assert.Equal("false", RequestUrl.QueryValue(request.Uri, "ignore_whitespace"));
+    }
+
+    /// <summary>
+    /// The same hop on the raw-diff endpoint, which additionally has to keep its <c>text/plain</c>
+    /// Accept header across the redirect — the request the chain issues itself gets none of
+    /// <see cref="HttpClient.DefaultRequestHeaders"/> for free.
+    /// </summary>
+    [Fact]
+    public async Task GetDiffFollowsTheRedirectAndKeepsItsCredentialAndAcceptHeader()
+    {
+        const string Diff = "diff --git a/src/A.cs b/src/A.cs\n--- a/src/A.cs\n+++ b/src/A.cs\n@@ -1 +1 @@\n-old\n+new\n";
+        const string Target = "https://api.bitbucket.org/2.0/repositories/acme/widget-api/diff-content/abc123";
+
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => StubHttpMessageHandler.CreateRedirect(HttpStatusCode.Found, Target));
+        stub.Enqueue(HttpStatusCode.OK, Diff, "text/plain");
+
+        using var client = CreateClient(stub);
+
+        var diff = await client.GetDiffAsync(
+            Workspace,
+            Repository,
+            412,
+            paths: ["src/A.cs"],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(Diff, diff);
+        Assert.Equal(2, stub.Requests.Count);
+
+        Assert.Equal(Target, stub.Requests[1].Uri?.AbsoluteUri);
+        Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
+        Assert.Equal("text/plain", stub.Requests[1].Headers["Accept"]);
     }
 
     // --------------------------------------------------------------- comments
@@ -1254,8 +1321,8 @@ public class BitbucketApiClientTests
 
         Assert.All(stub.Requests, request => Assert.Equal("Bearer token-1", request.Headers["Authorization"]));
 
-        // Per request, never a default header: a default one would survive the 302 the diff
-        // endpoints answer with and hand the credential to another host.
+        // Per request, never a default header: the pipeline decides per hop who is allowed the
+        // credential, and a default header would be attached to requests it never inspected.
         Assert.Equal(2, credentials.HeaderRequestCount);
         Assert.Equal(0, credentials.InvalidateCount);
     }

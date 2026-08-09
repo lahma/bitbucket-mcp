@@ -6,9 +6,9 @@ namespace Bitbucket.Mcp.Http.Models;
 /// Bitbucket's error body: <c>{"type":"error","error":{"message":"…","detail":"…","fields":{…}}}</c>.
 /// </summary>
 /// <remarks>
-/// Parsing this is always best effort. Not every non-2xx response is JSON at all (a 302 to a CDN,
-/// an HTML maintenance page, a bare <c>555</c>), and some endpoints put a shape in <c>detail</c> or
-/// <c>fields</c> that does not match the documented one. Callers therefore catch
+/// Parsing this is always best effort. Not every non-2xx response is JSON at all (a 302 to the
+/// diff content, an HTML maintenance page, a bare <c>555</c>), and some endpoints put a shape in
+/// <c>detail</c> or <c>fields</c> that does not match the documented one. Callers therefore catch
 /// <see cref="System.Text.Json.JsonException"/> and fall back to the raw body that
 /// <c>BitbucketApiException</c> carries anyway.
 /// </remarks>
