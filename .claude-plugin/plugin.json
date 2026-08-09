@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "bitbucket-mcp",
+  "displayName": "Bitbucket Cloud pull requests",
+  "version": "1.0.0",
+  "description": "The bitbucket-mcp server plus the pull-request workflow skill: review, comment, task, approve, create and merge Bitbucket Cloud pull requests.",
+  "author": {
+    "name": "lahma",
+    "url": "https://github.com/lahma"
+  },
+  "homepage": "https://github.com/lahma/bitbucket-mcp#readme",
+  "repository": "https://github.com/lahma/bitbucket-mcp",
+  "license": "MIT",
+  "keywords": ["bitbucket", "pull-request", "code-review", "mcp"],
+  "skills": ["./.claude/skills/bitbucket-pull-requests"],
+  "mcpServers": {
+    "bitbucket": {
+      "command": "dnx",
+      "args": ["bitbucket-mcp@1.0.0", "--yes"],
+      "env": {
+        "BITBUCKET_OAUTH_KEY": "${user_config.bitbucket_oauth_key}",
+        "BITBUCKET_OAUTH_SECRET": "${user_config.bitbucket_oauth_secret}",
+        "BITBUCKET_ACCESS_TOKEN": "${user_config.bitbucket_access_token}",
+        "BITBUCKET_EMAIL": "${user_config.bitbucket_email}",
+        "BITBUCKET_API_TOKEN": "${user_config.bitbucket_api_token}",
+        "BITBUCKET_DEFAULT_WORKSPACE": "${user_config.bitbucket_default_workspace}"
+      }
+    }
+  },
+  "userConfig": {
+    "bitbucket_default_workspace": {
+      "type": "string",
+      "title": "Default workspace slug",
+      "description": "The first URL segment of bitbucket.org/{workspace}/{repository} — a slug, not a display name. Set it and the workspace argument becomes optional on every tool.",
+      "default": ""
+    },
+    "bitbucket_email": {
+      "type": "string",
+      "title": "Atlassian account e-mail",
+      "description": "The simplest way in: fill this and the API token below. Leave both blank to sign in through the browser instead.",
+      "default": ""
+    },
+    "bitbucket_api_token": {
+      "type": "string",
+      "title": "Atlassian API token",
+      "description": "Paired with the e-mail above as Basic credentials. Needs read and write on both repository and pullrequest.",
+      "sensitive": true,
+      "default": ""
+    },
+    "bitbucket_oauth_key": {
+      "type": "string",
+      "title": "OAuth consumer key",
+      "description": "For the browser sign-in flow instead: the key of an OAuth consumer you create in your own Bitbucket workspace. See the project README.",
+      "default": ""
+    },
+    "bitbucket_oauth_secret": {
+      "type": "string",
+      "title": "OAuth consumer secret",
+      "description": "The secret matching the consumer key above.",
+      "sensitive": true,
+      "default": ""
+    },
+    "bitbucket_access_token": {
+      "type": "string",
+      "title": "Bitbucket access token",
+      "description": "A ready-made token sent as Bearer. Takes precedence over everything else here and skips the sign-in flow entirely; usually only wanted in CI.",
+      "sensitive": true,
+      "default": ""
+    }
+  }
+}

@@ -299,11 +299,12 @@ internal sealed class PullRequestWriteTools
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "Marks an inline comment thread resolved, or reopens it with resolved=false. This is the \"done\" tick " +
-        "on a review thread — resolve the threads you have addressed rather than only replying to them, " +
-        "because a repository can require every thread resolved before it will merge. Only works on a " +
-        "top-level comment anchored to the diff: a reply, or a comment on the pull request as a whole, has no " +
-        "thread to resolve and is refused. Asking for the state it is already in is not an error.")]
+        "Marks a comment thread resolved, or reopens it with resolved=false. This is the \"done\" tick on a " +
+        "review thread — resolve the threads you have addressed rather than only replying to them, because a " +
+        "repository can require every thread resolved before it will merge. Works on any top-level comment, " +
+        "inline or on the pull request as a whole; a reply has no thread of its own and is refused. Asking for " +
+        "the state it is already in is not an error, but it comes back without resolvedBy and resolvedOn, " +
+        "because Bitbucket answers a no-op with nothing to echo.")]
     public static async Task<CommentResolutionResult> ResolvePullRequestCommentAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -311,7 +312,7 @@ internal sealed class PullRequestWriteTools
         string repository,
         [Description("The pull request number, as it appears in the pull request's URL.")]
         int pullRequestId,
-        [Description("The comment whose thread to resolve, from getPullRequestComments. Must be a top-level inline comment — one with a path, and no parentId.")]
+        [Description("The comment whose thread to resolve, from getPullRequestComments. Must be a top-level comment — one with no parentId. It does not have to be inline; a comment on the pull request as a whole has a thread too.")]
         long commentId,
         [Description("true resolves the thread, false reopens it.")]
         bool resolved,

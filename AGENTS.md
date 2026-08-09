@@ -112,11 +112,47 @@ Two of those rows are judgement calls rather than readings of the API:
 ## Agent skill
 
 `.claude/skills/bitbucket-pull-requests/SKILL.md` is an [Agent Skill](https://agentskills.io)
-shipped with the repository. It is the **only** copy — there is no second one under `.agents/` or
-anywhere else; consumers whose tool looks elsewhere are pointed at this path from `README.md`.
-`.claude/skills/` is the location Claude Code loads as a project skill from a checkout, and the one
-Cursor and VS Code / Copilot also read; Codex and Gemini CLI read `.agents/skills/` only, so their
-users copy the directory across.
+shipped with the repository. It is the **only** copy — there is no second one under `.agents/`, and
+none inside a plugin directory either. Everything that installs it installs *that* file:
+
+- **Claude Code, in a checkout**: loaded as a project skill, because `.claude/skills/` is where
+  project skills live. Nothing to install.
+- **Claude Code, anywhere else**: the repository is its own plugin marketplace (below), and the
+  plugin's `skills` path points back at the same file.
+- **Every other tool**: `npx skills add lahma/bitbucket-mcp` and `gh skill install` both scan
+  `.claude/skills/` in the source repository and write to whatever location the target agent uses,
+  so no second location is needed here for Codex, Gemini CLI, Cursor or Copilot to install it.
+
+### The plugin and its marketplace
+
+`.claude-plugin/marketplace.json` lists exactly one plugin whose `source` is `"./"` — the
+repository root. That is the load-bearing choice: **an installed plugin cannot reference files
+outside its own root**, so any narrower source would have forced a second copy of `SKILL.md` or a
+symlink (which a Windows checkout without `core.symlinks` silently turns into a text file). With
+the root as the source, `.claude-plugin/plugin.json` names `./.claude/skills/bitbucket-pull-requests`
+directly. The cost is that installing copies the tracked tree — about 1.4 MB — into the plugin
+cache; that is the price of one canonical file, and it was judged worth paying.
+
+The same manifest bundles the MCP server (`dnx bitbucket-mcp@{version} --yes`), so one
+`/plugin install` delivers the skill and the server together. Two things about it are deliberate:
+
+- **The `dnx` pin is explicit, never floating.** Claude Code keys plugin updates off the plugin
+  `version`; a floating package id would let the server change under a user whose plugin version
+  never moved, pairing one release's skill with another release's tool surface.
+  `PluginManifestTests` asserts the pin, the plugin `version` and `CHANGELOG.md` are the same
+  string, so releasing means bumping the changelog and nothing else.
+- **The credential surface is derived, not restated.** `userConfig` declares one prompt per
+  environment variable in `.mcp/server.json`, and the `env` block wires each one through
+  `${user_config.…}`. The test asserts the two agree, including that a variable marked `isSecret`
+  is marked `sensitive` — an unmarked secret is written to `settings.json` in the clear, and a
+  mistyped placeholder is passed to the server as a literal credential rather than failing.
+
+Validate both manifests with the official CLI, which is non-interactive:
+
+```powershell
+claude plugin validate . --strict          # the marketplace manifest
+claude plugin marketplace add .            # resolves it; remove afterwards
+```
 
 It holds what neither `ServerInstructions` nor a tool `[Description]` can, because both are scoped
 to one call: the **order** the calls go in (diffstat before diff content, statuses before a merge,
@@ -158,6 +194,8 @@ transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and n
 ## Layout
 
 ```
+.claude-plugin/             marketplace.json + plugin.json — the repository as its own Claude Code
+                            plugin marketplace, source "./" (PluginManifestTests)
 .claude/skills/             The shipped Agent Skill (one canonical copy; AgentSkillTests keeps its
                             tool references in step with the inventory)
 .mcp/server.json            MCP server manifest (D17), packed into the NuGet package at
@@ -256,6 +294,12 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   be added, after the *Tool table*, `ToolInventoryTests` and `Build.cs`. The frontmatter is checked
   too: `name` must equal the directory name and satisfy the Agent Skills spec's charset, and
   `description` must be present and within 1024 characters.
+- **The plugin manifests still describe a working install.** `PluginManifestTests` asserts that the
+  marketplace lists this repository as its one plugin with `source: "./"`, that the declared skill
+  path still has a `SKILL.md` behind it (a moved skill would otherwise ship a plugin with no skill),
+  that the plugin `version` and the `dnx` pin are both `CHANGELOG.md`'s version, and that the
+  credential surface matches `.mcp/server.json` placeholder for placeholder. Nothing in the build
+  reads these manifests back, exactly as with the server manifest.
 - **`.mcp/server.json` agrees with the version authority.** `McpServerManifestTests` reads the
   checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root (the same
   root walk `NoStdoutWritesTest` uses) and asserts the manifest's `version` and its NuGet entry's

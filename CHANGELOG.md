@@ -50,6 +50,14 @@ Initial release.
   checkout, Cursor and VS Code read the same path, and other tools are pointed at the one canonical
   copy rather than given a second. `AgentSkillTests` cross-checks every tool it names against the
   reflected inventory in both directions, so it can neither invent a tool nor silently omit one.
+- The repository is also its own Claude Code plugin marketplace, so
+  `/plugin marketplace add lahma/bitbucket-mcp` followed by `/plugin install bitbucket-mcp` wires
+  up the skill **and** the server in one step: the plugin runs `dnx bitbucket-mcp@1.0.0` and prompts
+  for the credentials, storing secrets in the OS keychain. The plugin's source is the repository
+  root, which is what lets it point at the one canonical `SKILL.md` instead of carrying a copy, and
+  the `dnx` pin, the plugin version and this changelog are asserted to be the same string.
+  Users of other agents install the same file with `npx skills add lahma/bitbucket-mcp` or
+  `gh skill install`.
 - Native AOT single binary for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64, published
   from a four-package runtime dependency tree.
 - Also on nuget.org as the `bitbucket-mcp` .NET tool package, so `dnx bitbucket-mcp@1.0.0 --yes`

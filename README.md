@@ -31,7 +31,7 @@ Bitbucket Data Center is explicitly out of scope.
 | `createPullRequest` | Opens a new pull request. Title and source branch are required; reviewers are account UUIDs. | write, **not** destructive |
 | `updatePullRequest` | Changes an existing pull request's title, description, destination branch or reviewer list. `reviewers` replaces the whole list. | write, destructive |
 | `addPullRequestComment` | Posts a comment: general, a reply, or inline on a line of the diff — anchored by `codeSnippet` copied verbatim out of the diff, or by `line` plus `lineType`. | write, **not** destructive |
-| `resolvePullRequestComment` | Marks an inline comment thread resolved, or reopens it. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
+| `resolvePullRequestComment` | Marks a comment thread resolved, or reopens it — any top-level comment, inline or on the pull request as a whole. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
 | `addPullRequestTask` | Adds a task — one tracked item of work, optionally hung off a comment. Bitbucket counts these, and a repository can require them resolved before merging. | write, **not** destructive |
 | `updatePullRequestTask` | Ticks a task off, reopens it, or rewrites its text. | write, **not** destructive, idempotent |
 | `setPullRequestReviewStatus` | Sets the authenticated user's own review state: `APPROVED`, `CHANGES_REQUESTED` or `UNAPPROVED` (clears both flags). | write, **not** destructive, idempotent |
@@ -285,6 +285,9 @@ absolute path to the executable.
 
 ### Claude Code
 
+The shortest path is the plugin — it wires the server *and* the workflow skill in one step, and
+prompts for the credentials. See [Agent skill](#agent-skill). To register only the server:
+
 ```bash
 claude mcp add bitbucket \
   --env BITBUCKET_OAUTH_KEY=... \
@@ -495,18 +498,65 @@ schema only describes its own tool. That, plus the recovery moves (555, an ambig
 its one-paragraph description is always in context; the body loads when a Bitbucket task actually
 starts.
 
-There is one canonical copy, in this repository. How to wire it up:
+There is exactly one copy of the file, and everything below installs that copy.
 
-| Tool | What to do |
+### Claude Code: the plugin
+
+This repository is also its own [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces),
+so one install delivers **both** the skill and the server:
+
+```
+/plugin marketplace add lahma/bitbucket-mcp
+/plugin install bitbucket-mcp@bitbucket-mcp
+```
+
+or, without starting a session:
+
+```bash
+claude plugin marketplace add lahma/bitbucket-mcp
+claude plugin install bitbucket-mcp@bitbucket-mcp
+```
+
+Enabling it asks for your credentials in a dialog — Atlassian e-mail plus API token is the shortest
+way in, or the OAuth consumer key and secret for the browser flow, plus an optional default
+workspace. Every field is optional and each maps to the environment variable of the same name in
+*Environment variables* below; secrets go to the OS keychain rather than to `settings.json`. Nothing
+has to be downloaded first: the plugin runs the server with `dnx`, so it needs the .NET 10 SDK,
+and it is **pinned to the release it shipped with** rather than floating, so the skill and the
+server it describes always move together. `/plugin update` picks up the next release.
+
+Working inside a checkout of this repository needs none of that — `.claude/skills/` is loaded as a
+project skill automatically.
+
+### Any other tool
+
+The skill installs from this repository with either of the two ecosystem CLIs, both of which read
+`.claude/skills/` out of the source repo and write to whatever location your agent expects:
+
+```bash
+npx skills add lahma/bitbucket-mcp --skill bitbucket-pull-requests -a codex -y
+gh skill install lahma/bitbucket-mcp bitbucket-pull-requests --agent codex
+```
+
+Replace `codex` with `claude-code`, `cursor`, `gemini-cli` or `github-copilot`. Or copy the
+directory by hand — it is one file:
+
+| Tool | Where it looks |
 |---|---|
-| **Claude Code** | Nothing, inside a checkout of this repository — `.claude/skills/` is loaded as a project skill. To use it anywhere else, copy the `bitbucket-pull-requests` directory into `~/.claude/skills/`. |
-| **Cursor**, **VS Code / GitHub Copilot** | Both also read `.claude/skills/`; copy the directory into your project's `.claude/skills/` or your user-level one (`~/.claude/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`). |
-| **OpenAI Codex**, **Gemini CLI** | These read `.agents/skills/` (Gemini also `.gemini/skills/`). Copy the `bitbucket-pull-requests` directory there — `.agents/skills/bitbucket-pull-requests/SKILL.md`. |
-| **Anything else** | Point it at the file however it loads skills or instructions. The frontmatter uses only the six fields the Agent Skills spec defines, so it also uploads to claude.ai and the Skills API unchanged. |
+| **Claude Code** | `.claude/skills/` in the project, or `~/.claude/skills/` |
+| **Cursor** | `.agents/skills/`, `.cursor/skills/`, and `.claude/skills/` for compatibility |
+| **VS Code / GitHub Copilot** | `.github/skills/`, `.claude/skills/`, `.agents/skills/` |
+| **OpenAI Codex** | `.agents/skills/` only |
+| **Gemini CLI** | `.agents/skills/` or `.gemini/skills/` |
 
-The skill is checked against the server on every build: a test cross-references every tool it names
-against the real tool inventory, in both directions, so it cannot name a tool that does not exist
-and cannot quietly omit one that does.
+The frontmatter uses only the six fields the Agent Skills spec defines, so the same file also
+uploads to claude.ai and the Skills API unchanged.
+
+Both the skill and the plugin manifests are checked against the server on every build: one test
+cross-references every tool the skill names against the real tool inventory in both directions, so
+it can neither name a tool that does not exist nor quietly omit one that does; another asserts that
+the plugin's skill path still resolves, that its version is the one in `CHANGELOG.md`, that the
+`dnx` pin matches it, and that every credential it prompts for reaches the server.
 
 ## Troubleshooting
 

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
+  "name": "bitbucket-mcp",
+  "description": "The bitbucket-mcp server and its pull-request workflow skill, published from the project's own repository.",
+  "owner": {
+    "name": "lahma",
+    "url": "https://github.com/lahma"
+  },
+  "plugins": [
+    {
+      "name": "bitbucket-mcp",
+      "source": "./",
+      "category": "version-control",
+      "tags": ["bitbucket", "pull-request", "code-review", "mcp"]
+    }
+  ]
+}
