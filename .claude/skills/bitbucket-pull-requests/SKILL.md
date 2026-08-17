@@ -76,7 +76,11 @@ Coming back to a review you already left:
    `destinationBranch` targets the main branch. The result carries `url`: the link to hand a human,
    and the one value that cannot be derived.
 4. `updatePullRequest` to amend it afterwards. `reviewers` REPLACES the list, so send the existing
-   ones too, and the call overwrites anything edited in the browser meanwhile — read first.
+   ones too, and the call overwrites anything edited in the browser meanwhile — read first. It is
+   also the only way to reach `closeSourceBranch` and `draft` once the pull request exists:
+   `draft=false` marks a draft ready for review, and `closeSourceBranch=true` makes the merge delete
+   the branch. An omitted flag keeps its current value, so either one is a complete update on its
+   own — no need to resend the title to make the call legal.
 
 ## Discipline
 

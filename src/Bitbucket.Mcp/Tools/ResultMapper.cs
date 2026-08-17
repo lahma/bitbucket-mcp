@@ -54,6 +54,7 @@ internal static class ResultMapper
             UpdatedOn = dto.UpdatedOn,
             CommentCount = dto.CommentCount,
             TaskCount = dto.TaskCount,
+            CloseSourceBranch = dto.CloseSourceBranch,
             Url = dto.Links?.Html?.Href,
         };
     }

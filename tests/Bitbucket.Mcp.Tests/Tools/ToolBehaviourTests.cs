@@ -362,7 +362,10 @@ public class ToolBehaviourTests
                 cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("Nothing to update", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("title, description, destinationBranch or reviewers", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "title, description, destinationBranch, reviewers, closeSourceBranch or draft",
+            exception.Message,
+            StringComparison.Ordinal);
         Assert.Empty(handler.Requests);
     }
 
@@ -841,6 +844,34 @@ public class ToolBehaviourTests
         Assert.Contains("links.html.href", Single(handler.Requests[1], "fields"), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The list field set has always paid for <c>close_source_branch</c> on the wire, and the
+    /// mapper dropped it — so "which of these open pull requests will leave their branch behind?"
+    /// cost one <c>getPullRequest</c> per entry to answer.
+    /// </summary>
+    [Fact]
+    public async Task ListedPullRequestsCarryCloseSourceBranch()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var list = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(list.PullRequests[0].CloseSourceBranch);
+
+        Assert.Contains(
+            "values.close_source_branch",
+            Single(handler.Requests[0], "fields"),
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CommentResultsCarryTheWebUrl()
     {
@@ -1224,7 +1255,134 @@ public class ToolBehaviourTests
         Assert.DoesNotContain("\"destination\"", body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"description\"", body, StringComparison.Ordinal);
 
+        // The two flags are nullable for this line: as plain bools they defaulted to false and were
+        // serialised on every create, forcing a value where the caller had expressed no opinion.
+        Assert.DoesNotContain("\"close_source_branch\"", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"draft\"", body, StringComparison.Ordinal);
+
         Assert.Equal(42, result.Id);
+    }
+
+    /// <summary>
+    /// The regression behind issue #1: both flags round-trip through the wire model correctly and
+    /// were simply never bound, so passing one was accepted, answered 200, and changed nothing.
+    /// </summary>
+    [Fact]
+    public async Task UpdatingAPullRequestSendsCloseSourceBranchAndDraft()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            closeSourceBranch: true,
+            draft: false,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("""{"close_source_branch":true,"draft":false}""", request.Body);
+
+        Assert.True(result.CloseSourceBranch);
+    }
+
+    /// <summary>
+    /// Either flag on its own is a complete update. Before the fix the arity guard counted only
+    /// title, description, destinationBranch and reviewers, so this call was refused outright and
+    /// the workaround — resending the title to get past the guard — silently dropped the flag.
+    /// </summary>
+    [Theory]
+    [InlineData(true, null, """{"close_source_branch":true}""")]
+    [InlineData(false, null, """{"close_source_branch":false}""")]
+    [InlineData(null, false, """{"draft":false}""")]
+    [InlineData(null, true, """{"draft":true}""")]
+    public async Task EitherFlagAloneIsEnoughToUpdate(bool? closeSourceBranch, bool? draft, string expected)
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.UpdatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            closeSourceBranch: closeSourceBranch,
+            draft: draft,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected, Assert.Single(handler.Requests).Body);
+    }
+
+    /// <summary>
+    /// The endpoint is documented as a partial update, but every example Bitbucket publishes for it
+    /// carries a title. If it turns out to mean the examples, the pull request's own title is
+    /// fetched and resent with the change rather than the call simply failing.
+    /// </summary>
+    [Fact]
+    public async Task AFlagOnlyUpdateFallsBackToResendingThePullRequestsOwnTitle()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadRequest, """{"error":{"message":"title: This field is required."}}""");
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            closeSourceBranch: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Put, handler.Requests[0].Method);
+        Assert.Equal(HttpMethod.Get, handler.Requests[1].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+
+        Assert.Equal("""{"close_source_branch":true}""", handler.Requests[0].Body);
+        Assert.Equal(
+            """{"title":"Clamp the widget size","close_source_branch":true}""",
+            handler.Requests[2].Body);
+
+        Assert.Equal(42, result.Id);
+    }
+
+    /// <summary>
+    /// A 400 on a body that named a title is the caller's own problem — retrying it with the same
+    /// title would only spend a second request to fail the same way.
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateThatAlreadyCarriedATitleIsNotRetried()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadRequest, """{"error":{"message":"destination: Invalid branch."}}""");
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await Assert.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                Workspace,
+                title: "Clamp the widget size",
+                destinationBranch: "no/such/branch",
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Single(handler.Requests);
     }
 
     // ---------------------------------------------------------------------------------------

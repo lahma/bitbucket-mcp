@@ -170,6 +170,7 @@ internal static class ToolFixtures
               "updated_on": "2026-08-02T10:30:00+00:00",
               "comment_count": 3,
               "task_count": 0,
+              "close_source_branch": true,
               "author": { "display_name": "Ada Lovelace", "uuid": "{11111111-2222-3333-4444-555555555555}", "nickname": "ada" },
               "source": { "branch": { "name": "feature/clamp" } },
               "destination": { "branch": { "name": "main" } },

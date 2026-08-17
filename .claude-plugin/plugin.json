@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "bitbucket-mcp",
   "displayName": "Bitbucket Cloud pull requests",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "The bitbucket-mcp server plus the pull-request workflow skill: review, comment, task, approve, create and merge Bitbucket Cloud pull requests.",
   "author": {
     "name": "lahma",
@@ -16,7 +16,7 @@
   "mcpServers": {
     "bitbucket": {
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.0.0", "--yes"],
+      "args": ["bitbucket-mcp@1.1.0", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "${user_config.bitbucket_oauth_key}",
         "BITBUCKET_OAUTH_SECRET": "${user_config.bitbucket_oauth_secret}",
