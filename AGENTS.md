@@ -185,7 +185,23 @@ SourceLink needs no package reference — it is in-SDK on .NET 8 and later.
 
 ### Package budget changes
 
-_None yet._ The trusted-publishing exchange (D17) uses `Fallout.Common.Utilities.Net`
+**2026-08-17 — `NuGet.Frameworks` 7.9.0 in `build/_build.csproj`.** A version pin on a package that
+was already there transitively, not a new dependency, and nothing in `src/` or `tests/` moves.
+Fallout evaluates project files *in-process* — `ITest` asks each test project whether it references
+`GitHubActionsTestLogger` — which runs the installed SDK's own targets inside the Fallout process.
+Those targets bind `NuGet.Frameworks` by strong name; SDK 10.0.400 wants 7.9.0.0, while
+`Fallout.Components` 10.4.0 resolves 6.14.3 transitively through `NuGet.Packaging`. App-local
+assemblies win over the resolver `MSBuildLocator` installs, so the older copy shadowed the SDK's and
+every `Test` run died in `[MSBuild]::GetTargetFrameworkIdentifier(net10.0)` with
+`InvalidProjectFileException`. `Compile` and `Pack` shell out to the `dotnet` CLI and stayed green,
+which is why it looked like a test failure rather than a toolchain one. Nothing already present can
+supply the assembly: the version is chosen by Fallout's transitive graph, so the only lever is a
+direct reference. Pinned *forward* rather than pinning the SDK back — the runtime binds a higher
+assembly version than the one requested, so an SDK still asking for 6.14.3 is satisfied too, and the
+repository is not dated to one feature band. Remove once Fallout ships a `NuGet.Packaging` new
+enough to bring 7.9.0 in on its own.
+
+The trusted-publishing exchange (D17) uses `Fallout.Common.Utilities.Net`
 (`CreateRequest` / `WithBearerAuthentication` / `WithJsonContent` / `GetResponse` /
 `AssertResponse` / `GetBodyAsJsonObject`), which arrives with `Fallout.Common` 10.4.0 as the
 transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and nothing added to

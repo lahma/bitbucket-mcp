@@ -1,3 +1,26 @@
+# 1.1.0
+
+- `updatePullRequest` takes `closeSourceBranch` and `draft`. Both fields existed on the request
+  model and were serialised correctly, but the tool bound neither, so passing one was accepted,
+  answered `200 OK`, and changed nothing — and the arity guard counted only the four fields it did
+  bind, so the flag on its own was refused as "nothing to update"
+  ([#1](https://github.com/lahma/bitbucket-mcp/issues/1)). They are the only way to
+  reach either setting once a pull request is open: `draft=false` marks a draft ready for review,
+  and `closeSourceBranch=true` makes the merge delete the branch on a pull request opened without
+  it. Both are nullable, so an omitted flag keeps the current value rather than forcing `false`.
+- A flag-only update is one `PUT` carrying one field. Bitbucket documents the endpoint as a partial
+  update but publishes no example without a `title`, so a `400` on a body that named no title — and
+  only that combination — is answered by fetching the pull request and resending its own title with
+  the change, the same fallback `updatePullRequestTask` already makes for a state-only update.
+- `createPullRequest`'s `closeSourceBranch` and `draft` are nullable too. As plain booleans they
+  defaulted to `false` and were therefore written into every create body, forcing a value where the
+  caller had expressed no opinion; omitting them now leaves the field out and lets Bitbucket apply
+  its own default.
+- `listPullRequests` reports `closeSourceBranch` on each entry. The field set had always requested
+  it and the wire model had always deserialised it — only the summary result lacked the property,
+  so the value was fetched and discarded, and "which of these open pull requests will leave their
+  branch behind?" cost one `getPullRequest` per entry to answer.
+
 # 1.0.0
 
 Initial release.

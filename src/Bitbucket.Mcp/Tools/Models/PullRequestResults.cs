@@ -71,6 +71,13 @@ internal sealed record PullRequestSummary
     /// <summary>Number of open tasks.</summary>
     public int? TaskCount { get; init; }
 
+    /// <summary>
+    /// Whether merging will delete the source branch. Carried on the summary as well as the detail
+    /// because "which of these will leave their branch behind?" is a question about a list, and
+    /// answering it per pull request would be one <c>getPullRequest</c> each.
+    /// </summary>
+    public bool? CloseSourceBranch { get; init; }
+
     /// <summary>The pull request's page on bitbucket.org — the link to hand a human.</summary>
     public string? Url { get; init; }
 }

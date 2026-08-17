@@ -90,7 +90,7 @@ public class ToolSchemaTests
         "repository,title,sourceBranch")]
     [InlineData(
         "updatePullRequest",
-        "repository,pullRequestId,workspace,title,description,destinationBranch,reviewers",
+        "repository,pullRequestId,workspace,title,description,destinationBranch,reviewers,closeSourceBranch,draft",
         "repository,pullRequestId")]
     [InlineData(
         "addPullRequestComment",

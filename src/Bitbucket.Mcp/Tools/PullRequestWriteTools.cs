@@ -79,10 +79,10 @@ internal sealed class PullRequestWriteTools
         string? description = null,
         [Description("Reviewers to request, as Bitbucket account UUIDs in braced form ({...}). Read them from listDefaultReviewers, or from getPullRequest on an existing pull request. Display names, nicknames and emails are rejected.")]
         string[]? reviewers = null,
-        [Description("Delete the source branch when the pull request is merged. Defaults to false.")]
-        bool closeSourceBranch = false,
-        [Description("Open the pull request as a draft. Defaults to false.")]
-        bool draft = false,
+        [Description("Delete the source branch when the pull request is merged. Omit to take Bitbucket's own default, which is not to. updatePullRequest can change it afterwards.")]
+        bool? closeSourceBranch = null,
+        [Description("Open the pull request as a draft. Omit to take Bitbucket's own default, which is not to.")]
+        bool? draft = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -132,10 +132,13 @@ internal sealed class PullRequestWriteTools
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "Changes an existing pull request's title, description, destination branch or reviewer list. Anything " +
-        "left unset keeps its current value — except reviewers, which REPLACES the whole list, so include the " +
-        "existing reviewers (from getPullRequest) when adding one. Overwrites whatever is there now, " +
-        "including edits made by someone else, so read the pull request first.")]
+        "Changes an existing pull request's title, description, destination branch, reviewer list, " +
+        "close-source-branch flag or draft status. Anything left unset keeps its current value — except " +
+        "reviewers, which REPLACES the whole list, so include the existing reviewers (from getPullRequest) " +
+        "when adding one. This is the only way to reach closeSourceBranch and draft after the pull request " +
+        "was opened: draft=false marks a draft ready for review, and closeSourceBranch=true makes the merge " +
+        "delete the branch. Overwrites whatever is there now, including edits made by someone else, so read " +
+        "the pull request first.")]
     public static async Task<PullRequestDetail> UpdatePullRequestAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -153,6 +156,10 @@ internal sealed class PullRequestWriteTools
         string? destinationBranch = null,
         [Description("The complete new reviewer list, as Bitbucket account UUIDs in braced form ({...}). Read UUIDs from listDefaultReviewers or getPullRequest. This REPLACES the existing list; omit to leave the reviewers untouched.")]
         string[]? reviewers = null,
+        [Description("Whether merging should delete the source branch. Omit to keep the current setting; a pull request opened without it can only be corrected here.")]
+        bool? closeSourceBranch = null,
+        [Description("Whether the pull request is a draft. false marks a draft ready for review, true turns a ready pull request back into one. Omit to keep the current status.")]
+        bool? draft = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -167,19 +174,30 @@ internal sealed class PullRequestWriteTools
             Description = string.IsNullOrWhiteSpace(description) ? null : description,
             Destination = string.IsNullOrWhiteSpace(destinationBranch) ? null : Endpoint(destinationBranch),
             Reviewers = Accounts(reviewers),
+            CloseSourceBranch = closeSourceBranch,
+            Draft = draft,
         };
 
-        if (body.Title is null && body.Description is null && body.Destination is null && body.Reviewers is null)
+        // Every field the body can carry, not just the four that were bound first. One bound above
+        // but missing here is a field the caller can pass and is then refused for — and passing it
+        // alongside a title to get past the guard sends a PUT that changes nothing at all.
+        if (body.Title is null
+            && body.Description is null
+            && body.Destination is null
+            && body.Reviewers is null
+            && body.CloseSourceBranch is null
+            && body.Draft is null)
         {
             throw new McpException(
-                "Nothing to update: pass at least one of title, description, destinationBranch or reviewers.");
+                "Nothing to update: pass at least one of title, description, destinationBranch, reviewers, " +
+                "closeSourceBranch or draft.");
         }
 
         var context = new ToolCallContext("updatePullRequest", resolvedWorkspace, slug, id);
 
         return await ToolErrors.ExecuteAsync(context, async () =>
         {
-            var dto = await client.UpdatePullRequestAsync(resolvedWorkspace, slug, id, body, cancellationToken)
+            var dto = await SendUpdateAsync(client, resolvedWorkspace, slug, id, body, cancellationToken)
                 .ConfigureAwait(false);
 
             return ResultMapper.Detail(dto);
@@ -721,6 +739,66 @@ internal sealed class PullRequestWriteTools
         : throw new McpException(string.Create(
             CultureInfo.InvariantCulture,
             $"taskId must be 1 or greater; got {taskId}. Read it from listPullRequestTasks."));
+
+    /// <summary>
+    /// Sends the pull request update, retrying once with the pull request's existing title if
+    /// Bitbucket turns out to insist on one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The endpoint is documented as a partial update, so a body carrying nothing but
+    /// <c>close_source_branch</c> is legal, and that is what goes out first — one request, no read.
+    /// </para>
+    /// <para>
+    /// Every worked example Bitbucket publishes for this endpoint nevertheless carries a
+    /// <c>title</c>, and the endpoint documents a <c>400</c> for a missing required field. Rather
+    /// than bet the tool on which of the two is true, a 400 on a body that named no title — and
+    /// only that combination — is answered by fetching the pull request and resending its own title
+    /// alongside the change. Same shape as <see cref="UpdateTaskAsync"/>, for the same reason.
+    /// </para>
+    /// <para>
+    /// The title resent is the one just read, so the window in which it could undo someone else's
+    /// rename is a single round trip — and the tool is documented as last-write-wins anyway. If the
+    /// fetched pull request has no title to resend, the original failure stands rather than
+    /// becoming a second, less informative one.
+    /// </para>
+    /// </remarks>
+    private static async Task<PullRequestDto> SendUpdateAsync(
+        BitbucketApiClient client,
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        UpdatePullRequestRequest body,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client
+                .UpdatePullRequestAsync(workspace, repositorySlug, pullRequestId, body, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (BitbucketApiException exception)
+            when (exception.StatusCode == HttpStatusCode.BadRequest && body.Title is null)
+        {
+            var existing = await client
+                .GetPullRequestAsync(workspace, repositorySlug, pullRequestId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(existing.Title))
+            {
+                throw;
+            }
+
+            return await client
+                .UpdatePullRequestAsync(
+                    workspace,
+                    repositorySlug,
+                    pullRequestId,
+                    body with { Title = existing.Title },
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// Sends the task update, retrying once with the task's existing text if Bitbucket turns out to

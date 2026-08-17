@@ -21,7 +21,7 @@ Bitbucket Data Center is explicitly out of scope.
 
 | Tool | What it does | Annotations |
 |---|---|---|
-| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches, web URL). Defaults to open ones only; `sourceBranch` answers "does this branch already have a pull request?". | read-only, idempotent |
+| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches, `closeSourceBranch`, web URL). Defaults to open ones only; `sourceBranch` answers "does this branch already have a pull request?". | read-only, idempotent |
 | `getPullRequest` | Reads one pull request in full: title, description, state, branches, web URL, reviewers and participants with their approvals. | read-only, idempotent |
 | `getPullRequestDiff` | Fetches a pull request's changes: with no arguments it lists the changed files, and passing `paths` returns those files' unified diff. Truncation is always marked inline. | read-only, idempotent |
 | `getPullRequestComments` | Lists a pull request's comments — general and inline — oldest first, with deleted comments filtered out. | read-only, idempotent |
@@ -29,7 +29,7 @@ Bitbucket Data Center is explicitly out of scope.
 | `listPullRequestStatuses` | Lists the build statuses reported against a pull request — the merge-readiness check to run before `mergePullRequest`. | read-only, idempotent |
 | `listPullRequestTasks` | Lists a pull request's tasks, `RESOLVED` or `UNRESOLVED` — the outstanding work, which the comments alone do not tell you. | read-only, idempotent |
 | `createPullRequest` | Opens a new pull request. Title and source branch are required; reviewers are account UUIDs. | write, **not** destructive |
-| `updatePullRequest` | Changes an existing pull request's title, description, destination branch or reviewer list. `reviewers` replaces the whole list. | write, destructive |
+| `updatePullRequest` | Changes an existing pull request's title, description, destination branch, reviewer list, `closeSourceBranch` flag or `draft` status. `reviewers` replaces the whole list; the two flags are only reachable here once the pull request is open. | write, destructive |
 | `addPullRequestComment` | Posts a comment: general, a reply, or inline on a line of the diff — anchored by `codeSnippet` copied verbatim out of the diff, or by `line` plus `lineType`. | write, **not** destructive |
 | `resolvePullRequestComment` | Marks a comment thread resolved, or reopens it — any top-level comment, inline or on the pull request as a whole. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
 | `addPullRequestTask` | Adds a task — one tracked item of work, optionally hung off a comment. Bitbucket counts these, and a repository can require them resolved before merging. | write, **not** destructive |
