@@ -36,6 +36,10 @@ namespace Bitbucket.Mcp.Http.Models;
 [JsonSerializable(typeof(PageEnvelope<DefaultReviewerDto>), TypeInfoPropertyName = "DefaultReviewerPage")]
 [JsonSerializable(typeof(PageEnvelope<CommitStatusDto>), TypeInfoPropertyName = "CommitStatusPage")]
 [JsonSerializable(typeof(PageEnvelope<TaskDto>), TypeInfoPropertyName = "TaskPage")]
+[JsonSerializable(typeof(PageEnvelope<PipelineDto>), TypeInfoPropertyName = "PipelinePage")]
+[JsonSerializable(typeof(PageEnvelope<PipelineStepDto>), TypeInfoPropertyName = "PipelineStepPage")]
+[JsonSerializable(typeof(PageEnvelope<CodeInsightsReportDto>), TypeInfoPropertyName = "CodeInsightsReportPage")]
+[JsonSerializable(typeof(PageEnvelope<CodeInsightsAnnotationDto>), TypeInfoPropertyName = "CodeInsightsAnnotationPage")]
 
 // Single-object responses.
 [JsonSerializable(typeof(PullRequestDto))]
@@ -52,6 +56,19 @@ namespace Bitbucket.Mcp.Http.Models;
 [JsonSerializable(typeof(LinksDto))]
 [JsonSerializable(typeof(LinkDto))]
 [JsonSerializable(typeof(MergeTaskStatusDto))]
+[JsonSerializable(typeof(PipelineDto))]
+[JsonSerializable(typeof(PipelineStateDto))]
+[JsonSerializable(typeof(PipelineStateNameDto))]
+[JsonSerializable(typeof(PipelineTargetDto))]
+[JsonSerializable(typeof(PipelineSelectorDto))]
+[JsonSerializable(typeof(PipelineTriggerDto))]
+[JsonSerializable(typeof(PipelineStepDto))]
+[JsonSerializable(typeof(PipelineStepStateDto))]
+[JsonSerializable(typeof(PipelineStepResultDto))]
+[JsonSerializable(typeof(PipelineStepErrorDto))]
+[JsonSerializable(typeof(PipelineImageDto))]
+[JsonSerializable(typeof(CodeInsightsReportDto))]
+[JsonSerializable(typeof(CodeInsightsAnnotationDto))]
 [JsonSerializable(typeof(ErrorEnvelopeDto))]
 
 // Request bodies.

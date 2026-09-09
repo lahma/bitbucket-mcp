@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -6,6 +7,7 @@ using System.Text.Json.Serialization.Metadata;
 
 using Bitbucket.Mcp.Authentication;
 using Bitbucket.Mcp.Http.Models;
+using Bitbucket.Mcp.Pipelines;
 
 using Microsoft.Extensions.Logging;
 
@@ -473,6 +475,269 @@ internal sealed class BitbucketApiClient : IDisposable
             .ConfigureAwait(false);
     }
 
+    /// <summary>Lists a repository's pipeline runs, newest first.</summary>
+    /// <remarks>
+    /// <c>status</c> is Bitbucket's own filter vocabulary (<c>PASSED</c>, <c>FAILED</c>, …), which
+    /// is <b>not</b> the vocabulary its responses use — the tool layer translates before calling
+    /// this, and refuses anything outside the set, because Bitbucket answers an unknown value with
+    /// <c>200</c> and an empty page rather than an error.
+    /// </remarks>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<PipelineDto>> ListPipelinesAsync(
+        string workspace,
+        string repositorySlug,
+        string? targetBranch = null,
+        string? commit = null,
+        string? status = null,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? WithFields(DecodeCursor(cursor), FieldSets.Pipelines)
+            : BitbucketRequestBuilder.Repository(workspace, repositorySlug)
+                .Segment("pipelines")
+                .Query("fields", FieldSets.Pipelines)
+                .Query("sort", "-created_on")
+                .Query("target.branch", targetBranch)
+                .Query("target.commit.hash", commit)
+                .Query("status", status)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.PipelinePage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Reads one pipeline run, addressed by UUID or by build number.</summary>
+    internal async Task<PipelineDto> GetPipelineAsync(
+        string workspace,
+        string repositorySlug,
+        string pipeline,
+        CancellationToken cancellationToken = default)
+    {
+        var url = Pipeline(workspace, repositorySlug, pipeline)
+            .Query("fields", FieldSets.Pipeline)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.PipelineDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Lists the steps of one pipeline run, in execution order.</summary>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<PipelineStepDto>> ListPipelineStepsAsync(
+        string workspace,
+        string repositorySlug,
+        string pipeline,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? WithFields(DecodeCursor(cursor), FieldSets.PipelineSteps)
+            : Pipeline(workspace, repositorySlug, pipeline)
+                .Segment("steps")
+                .Query("fields", FieldSets.PipelineSteps)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.PipelineStepPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fetches a pipeline step's log and reduces it on the way past, so the whole file is never
+    /// held in memory.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The ladder.</b> A tail or head read asks for a byte range; a search read cannot, because a
+    /// grep has to see every line. Bitbucket answers <c>307</c> to a presigned storage URL, and the
+    /// hop is followed by <see cref="AuthenticationHandler"/> — anonymously, since the target is not
+    /// <c>api.bitbucket.org</c>. That is not merely allowed but required: a presigned URL carries
+    /// its signature in the query string, and storage rejects a request that also presents an
+    /// <c>Authorization</c> header. This is the first endpoint in the server that redirects off the
+    /// API host (D16 and D19).
+    /// </para>
+    /// <para>
+    /// A <c>206</c> is the happy path and its <c>Content-Range</c> gives the log's full size for
+    /// free. A <c>200</c> means the range was ignored, so the reducer streams and keeps a bounded
+    /// ring instead. A <c>416</c> is retried once without the header, landing on the same
+    /// <c>200</c> path. Verified against live storage on 2026-09-09: suffix ranges are honoured,
+    /// ranged responses are not compressed, and <c>HEAD</c> answers <c>403</c> because the URL is
+    /// signed for <c>GET</c> — so the size is never probed separately.
+    /// </para>
+    /// </remarks>
+    internal async Task<LogExcerpt> GetPipelineStepLogAsync(
+        string workspace,
+        string repositorySlug,
+        string pipeline,
+        string stepUuid,
+        LogReadMode mode,
+        string? pattern,
+        int contextLines,
+        int maxLines,
+        long byteBudget,
+        CancellationToken cancellationToken = default)
+    {
+        var url = Pipeline(workspace, repositorySlug, pipeline)
+            .Segment("steps")
+            .Segment(stepUuid)
+            .Segment("log")
+            .Build();
+
+        var ranged = mode is not LogReadMode.Search;
+
+        var response = await SendLogAsync(url, mode, maxLines, byteBudget, ranged, cancellationToken)
+            .ConfigureAwait(false);
+
+        try
+        {
+            // 416 means the range was refused outright — an empty log is the usual cause. One retry
+            // without the header turns it into the ordinary whole-body read.
+            if ((int) response.StatusCode == 416)
+            {
+                response.Dispose();
+                response = await SendLogAsync(url, mode, maxLines, byteBudget, ranged: false, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var (rangeStart, totalBytes) = ReadContentRange(response);
+
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+
+            return mode switch
+            {
+                LogReadMode.Head => await LogReducer
+                    .HeadAsync(stream, maxLines, byteBudget, totalBytes, cancellationToken)
+                    .ConfigureAwait(false),
+
+                LogReadMode.Search => await LogReducer
+                    .SearchAsync(stream, pattern!, contextLines, maxLines, totalBytes, cancellationToken)
+                    .ConfigureAwait(false),
+
+                _ => await LogReducer
+                    .TailAsync(stream, maxLines, byteBudget, rangeStart, totalBytes, cancellationToken)
+                    .ConfigureAwait(false),
+            };
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
+    /// <summary>Issues one log request, optionally ranged, and fails anything but 2xx or 416.</summary>
+    private async Task<HttpResponseMessage> SendLogAsync(
+        string url,
+        LogReadMode mode,
+        int maxLines,
+        long byteBudget,
+        bool ranged,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        // A request-level Accept suppresses the client-wide JSON default entirely, and the header
+        // survives the redirect hop. It must name application/octet-stream: unlike the diff
+        // endpoint, this one serves the log as a binary stream and answers 406 to an Accept that
+        // offers only text/plain (verified against the live API on 2026-09-09). text/plain follows
+        // it because the content genuinely is text, and a wildcard keeps a future content type from
+        // reintroducing the same 406.
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain", 0.9));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*", 0.8));
+
+        if (ranged)
+        {
+            _ = mode is LogReadMode.Head
+                ? request.Headers.Range = new RangeHeaderValue(0, byteBudget - 1)
+                : request.Headers.Range = new RangeHeaderValue(null, byteBudget);
+        }
+
+        var attempts = new RetryAttemptCounter();
+        var response = await SendAsync(request, attempts, cancellationToken).ConfigureAwait(false);
+
+        if (response.IsSuccessStatusCode || (int) response.StatusCode == 416)
+        {
+            return response;
+        }
+
+        try
+        {
+            await ThrowIfNotSuccessAsync(response, attempts.Value, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
+
+        throw new UnreachableException();
+    }
+
+    /// <summary>Reads <c>Content-Range: bytes {start}-{end}/{total}</c>, when there is one.</summary>
+    private static (long RangeStart, long? TotalBytes) ReadContentRange(HttpResponseMessage response)
+    {
+        var range = response.Content.Headers.ContentRange;
+
+        if (range is null || !range.HasRange)
+        {
+            return (0, response.Content.Headers.ContentLength);
+        }
+
+        return (range.From.GetValueOrDefault(), range.Length);
+    }
+
+    /// <summary>Lists the Code Insights reports attached to a commit.</summary>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<CodeInsightsReportDto>> ListCodeInsightsReportsAsync(
+        string workspace,
+        string repositorySlug,
+        string commit,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? WithFields(DecodeCursor(cursor), FieldSets.CodeInsightsReports)
+            : Commit(workspace, repositorySlug, commit)
+                .Segment("reports")
+                .Query("fields", FieldSets.CodeInsightsReports)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.CodeInsightsReportPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Lists one report's annotations — its file-and-line findings.</summary>
+    /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
+    internal async Task<Page<CodeInsightsAnnotationDto>> ListCodeInsightsAnnotationsAsync(
+        string workspace,
+        string repositorySlug,
+        string commit,
+        string reportId,
+        int? pageSize = null,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = cursor is not null
+            ? WithFields(DecodeCursor(cursor), FieldSets.CodeInsightsAnnotations)
+            : Commit(workspace, repositorySlug, commit)
+                .Segment("reports")
+                .Segment(reportId)
+                .Segment("annotations")
+                .Query("fields", FieldSets.CodeInsightsAnnotations)
+                .Query("pagelen", ClampPageSize(pageSize))
+                .Build();
+
+        return await GetPageAsync(url, BitbucketWireJsonContext.Default.CodeInsightsAnnotationPage, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>Lists a pull request's tasks.</summary>
     /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
     internal async Task<Page<TaskDto>> ListTasksAsync(
@@ -805,6 +1070,50 @@ internal sealed class BitbucketApiClient : IDisposable
         }
 
         return clauses.Count == 0 ? null : string.Join(" AND ", clauses);
+    }
+
+    /// <summary>Builder rooted at one pipeline run, addressed by UUID or by build number.</summary>
+    private static BitbucketRequestBuilder Pipeline(string workspace, string repositorySlug, string pipeline) =>
+        BitbucketRequestBuilder.Repository(workspace, repositorySlug)
+            .Segment("pipelines")
+            .Segment(pipeline);
+
+    /// <summary>Builder rooted at one commit.</summary>
+    private static BitbucketRequestBuilder Commit(string workspace, string repositorySlug, string commit) =>
+        BitbucketRequestBuilder.Repository(workspace, repositorySlug)
+            .Segment("commit")
+            .Segment(commit);
+
+    /// <summary>
+    /// Re-applies a <c>fields=</c> list to a decoded cursor when the URL Bitbucket handed back does
+    /// not already carry one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pull-request and commit endpoints echo <c>fields=</c> into their <c>next</c> link, so a
+    /// cursor followed verbatim keeps returning the trimmed shape. <b>The pipelines endpoints do
+    /// not.</b> Measured against the live API on 2026-09-09: page one of
+    /// <c>/pipelines?fields=next,values.uuid</c> answers 50 bytes per entry, and its own
+    /// <c>next</c> link — which omits <c>fields</c> — answers 2,615, a 52x increase that lands
+    /// squarely in the model's context and only on page two.
+    /// </para>
+    /// <para>
+    /// Appending is safe for both kinds: a cursor that already names <c>fields</c> is returned
+    /// untouched, so an endpoint that starts echoing the parameter later needs no change here.
+    /// </para>
+    /// </remarks>
+    private static string WithFields(string url, string fields)
+    {
+        var query = url.IndexOf('?', StringComparison.Ordinal);
+
+        if (query >= 0 && url.AsSpan(query).Contains("fields=", StringComparison.Ordinal))
+        {
+            return url;
+        }
+
+        var separator = query >= 0 ? '&' : '?';
+
+        return string.Concat(url, separator.ToString(), "fields=", Uri.EscapeDataString(fields));
     }
 
     /// <summary>Wraps a value in BBQL's double quotes, escaping backslashes and quotes.</summary>

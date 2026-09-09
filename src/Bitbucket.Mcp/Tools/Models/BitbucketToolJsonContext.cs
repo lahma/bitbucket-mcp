@@ -67,6 +67,18 @@ namespace Bitbucket.Mcp.Tools.Models;
 [JsonSerializable(typeof(MergeResult))]
 [JsonSerializable(typeof(DeclineResult))]
 
+// Pipeline and build-diagnosis results.
+[JsonSerializable(typeof(PipelineSummary))]
+[JsonSerializable(typeof(PipelineListResult))]
+[JsonSerializable(typeof(PipelineStepSummary))]
+[JsonSerializable(typeof(PipelineDetail))]
+[JsonSerializable(typeof(PipelineStepLogResult))]
+
+// Code Insights results.
+[JsonSerializable(typeof(CodeInsightAnnotation))]
+[JsonSerializable(typeof(CodeInsightReport))]
+[JsonSerializable(typeof(CodeInsightsResult))]
+
 // Tool parameter types, for schema generation.
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(string[]))]

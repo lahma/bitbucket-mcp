@@ -1,13 +1,15 @@
 ---
 name: bitbucket-pull-requests
 description: >-
-  Review, create and merge Bitbucket Cloud pull requests through the bitbucket-mcp MCP server.
-  Use when a task touches a Bitbucket pull request — reading a diff, leaving inline comments or
-  tasks, approving or requesting changes, opening a pull request from a branch, merging or
-  declining one — and the bitbucket-mcp tools (`listPullRequests`, `getPullRequestDiff`,
-  `addPullRequestComment`, `mergePullRequest` and the rest) are attached. Covers the order the
-  calls go in: diffstat before diff content, snippet-anchored inline comments, build statuses
-  before a merge decision, and when to ask local git instead of spending an API call.
+  Review, create and merge Bitbucket Cloud pull requests, and diagnose failed Bitbucket Pipelines
+  builds, through the bitbucket-mcp MCP server. Use when a task touches a Bitbucket pull request —
+  reading a diff, leaving inline comments or tasks, approving or requesting changes, opening a pull
+  request from a branch, merging or declining one — or when a Bitbucket build or pipeline is
+  failing and the question is why, and the bitbucket-mcp tools (`listPullRequests`,
+  `getPullRequestDiff`, `addPullRequestComment`, `mergePullRequest`, `listPipelines`,
+  `getPipelineStepLog` and the rest) are attached. Covers the order the calls go in: diffstat
+  before diff content, snippet-anchored inline comments, build statuses before a merge decision,
+  the failing step before its log, and when to ask local git instead of spending an API call.
 license: MIT
 compatibility: Requires the bitbucket-mcp MCP server, signed in and attached to the client. Bitbucket Cloud only.
 ---
@@ -69,18 +71,51 @@ Coming back to a review you already left:
 
 1. `listPullRequests` with `sourceBranch` and `state="ALL"` — the deduplication check.
    `createPullRequest` is not idempotent: called twice it opens two pull requests.
-2. `listDefaultReviewers` — reviewers are Bitbucket account UUIDs in braced form and nothing else.
-   Read them from here, or from `getPullRequest` on an existing pull request. Never turn a display
-   name into a UUID by guessing.
+2. Reviewers — **only if the user asked for them.** Opening a pull request with no reviewers is
+   the normal call, and `createPullRequest` leaves the field out when `reviewers` is unset. Where
+   the repository or its project carries a default-reviewer rule and the user does not want it,
+   pass `reviewers: []`, which is the one way to say "nobody". When reviewers *are* wanted,
+   `listDefaultReviewers` is where their UUIDs come from — braced account UUIDs and nothing else,
+   never a display name turned into one by guessing. Listing them is not a reason to add them.
 3. `createPullRequest` — `title` and `sourceBranch` are the only required arguments, and omitting
    `destinationBranch` targets the main branch. The result carries `url`: the link to hand a human,
    and the one value that cannot be derived.
 4. `updatePullRequest` to amend it afterwards. `reviewers` REPLACES the list, so send the existing
-   ones too, and the call overwrites anything edited in the browser meanwhile — read first. It is
+   ones too — or `[]` to remove everyone — and the call overwrites anything edited in the browser
+   meanwhile, so read first. It is
    also the only way to reach `closeSourceBranch` and `draft` once the pull request exists:
    `draft=false` marks a draft ready for review, and `closeSourceBranch=true` makes the merge delete
    the branch. An omitted flag keeps its current value, so either one is a complete update on its
    own — no need to resend the title to make the call legal.
+
+## Diagnose a failed build
+
+The order matters more here than anywhere else, because the last step is the expensive one and is
+usually unnecessary.
+
+1. `listPullRequestStatuses`, if the starting point is a pull request — it says *whether* CI is red
+   without spending a pipeline call.
+2. `listPipelines` to find the run. `targetBranch` is the pull request's `sourceBranch`; `commit`
+   is its `sourceCommit`, which is more precise when the branch has moved on. `status` takes the
+   same words results report (`FAILED`, `SUCCESSFUL`, `RUNNING`, …), and an unrecognised one is
+   refused rather than silently matching nothing. An empty list means the repository has never run
+   a pipeline — not that the build failed.
+3. `getPipeline` on that run. It returns the steps and `failedStepUuid` in one call. **Read the
+   failing step's `errorMessage` before going further**: "the step timed out", "the image could not
+   be pulled" and their kind are the whole answer, and reading a log to rediscover them wastes a
+   large fraction of the context budget.
+4. `listCodeInsights` with the run's `commitHash` — often faster than any log, because a linter,
+   scanner or test reporter names the file, the line and the message directly. It also needs no
+   scope the pull-request tools do not already have, so it works when step 5 answers 403.
+5. `getPipelineStepLog` last, with `stepUuid` set to `failedStepUuid`. It returns the **end** of
+   the log by default, which is where a step running under `set -e` reports what broke. When the
+   failure is not at the end, pass `pattern` — a literal, case-insensitive substring, not a regular
+   expression — to search the whole log instead; supplying it selects search mode on its own.
+   `mode="head"` is only for a container that died before producing output of its own.
+
+Never ask for a whole log. The response is always capped at `maxLines`, and a cut is marked inside
+the text and flagged by `truncated` — a truncated log must never be reported as the whole log. If
+the answer is not in the tail, search for it; do not raise `maxLines` repeatedly.
 
 ## Discipline
 
@@ -108,5 +143,12 @@ Coming back to a review you already left:
   *Troubleshooting* in the server's README.
 - **429.** The client already retried with backoff, so one that reaches you means slow down:
   smaller pages, per-file diffs.
+- **403 on a pipeline tool.** The credential predates these tools rather than lacking repository
+  access: reading Pipelines needs the `pipeline` OAuth scope, or `read:pipeline:bitbucket` on an
+  API token. Widening an OAuth consumer does not widen a grant that was already cached, so it takes
+  `bitbucket-mcp logout` then `bitbucket-mcp login`; an API token's scopes cannot be edited at all,
+  so it takes a new token. `listCodeInsights` needs neither and often answers the question anyway.
+- **404 from `getPipelineStepLog`.** The step has produced no log yet, or never started. Check the
+  step's state with `getPipeline` rather than retrying.
 - **"Not signed in".** `bitbucket-mcp login`, or the token environment variables — see
   *Authentication* in the server's README.

@@ -33,7 +33,8 @@ public class ToolInventoryTests
 {
     /// <summary>
     /// The design's tool list (AGENTS.md, *Tool table*), in full and in ordinal order. Adding a tool
-    /// must mean editing this array, that table and <c>Build.cs</c>'s <c>ExpectedToolNames</c>.
+    /// must mean editing this array, that table, <c>Build.cs</c>'s <c>ExpectedToolNames</c>, the
+    /// shipped skill, <c>ToolSchemaTests</c>'s row and the README — six places, none optional.
     /// </summary>
     private static readonly string[] ExpectedToolNames =
     [
@@ -41,10 +42,14 @@ public class ToolInventoryTests
         "addPullRequestTask",
         "createPullRequest",
         "declinePullRequest",
+        "getPipeline",
+        "getPipelineStepLog",
         "getPullRequest",
         "getPullRequestComments",
         "getPullRequestDiff",
+        "listCodeInsights",
         "listDefaultReviewers",
+        "listPipelines",
         "listPullRequestStatuses",
         "listPullRequestTasks",
         "listPullRequests",
@@ -67,12 +72,12 @@ public class ToolInventoryTests
     ];
 
     [Fact]
-    public void ExactlySixteenToolsAreDeclaredAcrossTheTwoToolClasses()
+    public void ExactlyTwentyToolsAreDeclaredAcrossTheThreeToolClasses()
     {
-        Assert.Equal(2, ToolTestHost.ToolTypes.Count);
+        Assert.Equal(3, ToolTestHost.ToolTypes.Count);
         Assert.Equal(ExpectedToolNames.Length, ToolTestHost.ToolMethods.Count);
         Assert.Equal(ExpectedToolNames.Length, ToolTestHost.Tools.Count);
-        Assert.Equal(16, ExpectedToolNames.Length);
+        Assert.Equal(20, ExpectedToolNames.Length);
     }
 
     [Fact]
@@ -100,6 +105,10 @@ public class ToolInventoryTests
     [InlineData("setPullRequestReviewStatus", "Set pull request review status")]
     [InlineData("mergePullRequest", "Merge pull request")]
     [InlineData("declinePullRequest", "Decline pull request")]
+    [InlineData("listPipelines", "List pipelines")]
+    [InlineData("getPipeline", "Get pipeline")]
+    [InlineData("getPipelineStepLog", "Get pipeline step log")]
+    [InlineData("listCodeInsights", "List code insights")]
     public void TitleIsTheOneThePlanSpecifies(string name, string expectedTitle)
     {
         var tool = ToolTestHost.Find(name).ProtocolTool;
@@ -121,6 +130,10 @@ public class ToolInventoryTests
     [InlineData("listDefaultReviewers", true, null, true, true)]
     [InlineData("listPullRequestStatuses", true, null, true, true)]
     [InlineData("listPullRequestTasks", true, null, true, true)]
+    [InlineData("listPipelines", true, null, true, true)]
+    [InlineData("getPipeline", true, null, true, true)]
+    [InlineData("getPipelineStepLog", true, null, true, true)]
+    [InlineData("listCodeInsights", true, null, true, true)]
     [InlineData("createPullRequest", false, false, false, true)]
     [InlineData("addPullRequestComment", false, false, false, true)]
     [InlineData("addPullRequestTask", false, false, false, true)]

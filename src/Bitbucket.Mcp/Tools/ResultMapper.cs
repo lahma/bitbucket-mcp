@@ -19,7 +19,7 @@ namespace Bitbucket.Mcp.Tools;
 /// camelCase and ours, the DTOs are snake_case and Bitbucket's, and nothing serialises both.
 /// </para>
 /// </remarks>
-internal static class ResultMapper
+internal static partial class ResultMapper
 {
     /// <summary>Collapses an account to a name and the UUID that identifies it.</summary>
     internal static UserSummary? User(AccountDto? account)
@@ -49,6 +49,7 @@ internal static class ResultMapper
             Draft = dto.Draft,
             Author = User(dto.Author),
             SourceBranch = dto.Source?.Branch?.Name,
+            SourceCommit = dto.Source?.Commit?.Hash,
             DestinationBranch = dto.Destination?.Branch?.Name,
             CreatedOn = dto.CreatedOn,
             UpdatedOn = dto.UpdatedOn,
@@ -95,6 +96,7 @@ internal static class ResultMapper
             Description = dto.Description,
             Author = User(dto.Author),
             SourceBranch = dto.Source?.Branch?.Name,
+            SourceCommit = dto.Source?.Commit?.Hash,
             DestinationBranch = dto.Destination?.Branch?.Name,
             CreatedOn = dto.CreatedOn,
             UpdatedOn = dto.UpdatedOn,

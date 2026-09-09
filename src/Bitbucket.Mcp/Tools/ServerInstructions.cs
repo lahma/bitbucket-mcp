@@ -23,6 +23,7 @@ internal static class ServerInstructions
         - Reviewers are Bitbucket account UUIDs in braced form ({...}), never names or emails. Read them from listDefaultReviewers, or from getPullRequest on an existing pull request.
         - Review state: setPullRequestReviewStatus takes APPROVED, CHANGES_REQUESTED or UNAPPROVED; UNAPPROVED clears both flags.
         - createPullRequest, updatePullRequest, mergePullRequest and declinePullRequest take effect immediately on the real repository. Confirm the pull request with getPullRequest, and its builds with listPullRequestStatuses, before merging or declining it.
+        - Builds: listPipelines (targetBranch = a pull request's sourceBranch) finds its runs; getPipeline names the step that failed and hands you its stepUuid and errorMessage — read that before any log; getPipelineStepLog reads the step's log, its end by default or pattern="..." to search it; listCodeInsights on a commit gives file-and-line findings and needs no extra scope.
         - First run needs a sign-in: `bitbucket-mcp login`, or BITBUCKET_ACCESS_TOKEN (or BITBUCKET_EMAIL + BITBUCKET_API_TOKEN) in this server's environment.
         """;
 }

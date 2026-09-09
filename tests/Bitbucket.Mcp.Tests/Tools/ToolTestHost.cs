@@ -38,7 +38,7 @@ internal static class ToolTestHost
 {
     /// <summary>The two classes registered with <c>WithTools&lt;T&gt;</c>.</summary>
     internal static IReadOnlyList<Type> ToolTypes { get; } =
-        [typeof(PullRequestReadTools), typeof(PullRequestWriteTools)];
+        [typeof(PullRequestReadTools), typeof(PullRequestWriteTools), typeof(PipelineReadTools)];
 
     /// <summary>Every <c>[McpServerTool]</c> method, discovered the way the SDK discovers them.</summary>
     internal static IReadOnlyList<MethodInfo> ToolMethods { get; } = DiscoverToolMethods();

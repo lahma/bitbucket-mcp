@@ -37,27 +37,51 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D17)
+## Design decisions (D1–D21)
 
 | # | Decision |
 |---|---|
 | D1 | **One production project** `src/Bitbucket.Mcp` (Exe) + one test project. Testability via `InternalsVisibleTo`. |
 | D2 | Binary `bitbucket-mcp` (`AssemblyName`), `RootNamespace Bitbucket.Mcp`. |
 | D3 | **Bare `ServiceCollection`**, not `Host.CreateApplicationBuilder` — the SDK registers `McpServer` as a singleton; `provider.GetRequiredService<McpServer>().RunAsync()` (this is the SDK's own AOT test app shape). Drops config providers/metrics/lifetime from cold start. `PosixSignalRegistration` for SIGINT/SIGTERM. |
-| D4 | **Hand-rolled retry `DelegatingHandler`** (~90 lines) — `Microsoft.Extensions.Http.Resilience` would pull in Polly (third-party) plus six more packages. |
+| D4 | **Hand-rolled retry `DelegatingHandler`** (~190 lines of code) — `Microsoft.Extensions.Http.Resilience` would pull in Polly (third-party) plus six more packages. |
 | D5 | No `IHttpClientFactory` — one singleton `HttpClient` over a hand-built handler chain. |
 | D6 | Our `JsonSerializerContext` goes **first** in `TypeInfoResolverChain`, the SDK resolver second (first-match-wins; ours-first guarantees identical JIT and AOT behavior). |
 | D7 | `JsonSerializerIsReflectionEnabledByDefault=false` in the server **and** the test csproj — a missing `[JsonSerializable]` then fails in `dotnet test`, not only after an AOT publish. |
 | D8 | **Static tool methods**; `BitbucketApiClient` as a plain parameter (DI-bound via `IServiceProviderIsService`, excluded from the schema); avoids per-call instance activation and is directly unit-testable. |
 | D9 | No `RuntimeIdentifiers` in the csproj (would pull ILCompiler packs per RID on every restore); the RID list lives in `Build.cs` and the release matrix, and reaches publish via `-r`. |
 | D10 | No `PublishSingleFile` (ignored under AOT). |
-| D11 | **xunit.v3 + `xunit.runner.visualstudio` + `Microsoft.NET.Test.Sdk`** (VSTest bridge) so the stock Fallout `ITest` component works unmodified. Fallback if it breaks: a custom Test target with `--report-trx`. |
+| D11 | **xunit.v3 + `xunit.runner.visualstudio` + `Microsoft.NET.Test.Sdk`** (VSTest bridge) so the stock Fallout `ITest` component works unmodified. The bridge is not incidental, it *is* the interface: Fallout 10.4.0's `ITest` passes `--logger trx;LogFileName=` and `--logger GitHubActions`, probes each test project for a `GitHubActionsTestLogger` reference, and parses the resulting TRX against the VSTest `TeamTest/2010` schema. **This is what holds the pins at xunit.v3 3.2.2** — 4.0.0 drops VSTest-mode support, and taking it would silently degrade CI reporting to "the run passed or it did not". Fallback if it breaks: a custom Test target with `--report-trx`, plus a decision about what replaces the GitHub Actions annotations. Revisit when Fallout's `ITest` speaks Microsoft.Testing.Platform natively. |
 | D12 | OAuth loopback callback via a raw **`TcpListener`** bound to both `127.0.0.1` and `::1` (~60 auditable lines, no `HttpListener` platform quirks). |
 | D13 | **Confidential OAuth client** (key + secret, Basic auth at the token endpoint), no PKCE (unconfirmed for Bitbucket Cloud; leave an internal hook). The user creates their own consumer. |
 | D14 | Access-token lifetime always taken from `expires_in` (minus 60 s skew) — never hard-coded; Atlassian's docs contradict themselves (1 h vs 2 h). |
 | D15 | **`login` / `logout` / `status` CLI modes** on the same binary (argv dispatch, hand-rolled parsing); no args = stdio server. CLI mode may use stdout; server mode never. |
 | D16 | **Redirects are followed by hand, not by the transport.** `SocketsHttpHandler` strips the `Authorization` header on **all** automatic redirects, same-origin included, and does not re-apply a default header to the redirected request either (verified 2026-08-09 against live Bitbucket and a local echo server — the diff and diffstat endpoints `302` to another path on `api.bitbucket.org` whose target still needs the credential, so the redirected request came back `404`). The transport therefore sets `AllowAutoRedirect=false` and `AuthenticationHandler` follows redirects itself: `GET`/`HEAD` only (never replay a request with content), 301/302/303/307/308, at most 5 hops, relative `Location` resolved against the current URI, and the credential re-attached **only** when the target is `https` on `api.bitbucket.org` — a redirect anywhere else is followed anonymously. |
 | D17 | **NuGet is a second distribution channel, not the primary one.** `dotnet pack` produces `bitbucket-mcp`, a framework-dependent .NET tool package (`PackAsTool`) carrying `PackageType=McpServer` and an embedded `.mcp/server.json`, so `dnx bitbucket-mcp@{version}` works without a download step; the Native AOT binaries stay the recommended way to run the server. It is pushed by **trusted publishing** — the workflow exchanges its GitHub OIDC token for an API key that lives minutes — so no NuGet API key exists in the repository or in GitHub secrets. The exchange is **C# inside the build** (`build/Build.Publish.cs`), not the `NuGet/login` marketplace action: it is auditable alongside everything else and adds no third-party action to the release path. It has its **own generated workflow file**, `.github/workflows/publish.yml`, triggered by `v*.*.*` tags only, because a nuget.org policy is scoped by workflow *file name* and the nuget.org UI has no branch or tag filter — a one-job workflow that only a tag can start is the smallest thing that can hold the capability, and `build.yml` cannot mint a key because it is not the file named in the policy. GitHub environment `nuget` (deployment branch policy: tags `v*`) adds a second claim the policy matches on. |
+| D18 | **A state-only `updatePullRequest` retries once with the pull request's own title.** Bitbucket documents `PUT /pullrequests/{id}` as a partial update but publishes no example without a `title`, and answers `400` to some bodies that name none. `SendUpdateAsync` catches exactly that combination — a 400 on a body with no title — fetches the pull request and resends with its existing title. `UpdateTaskAsync` does the same for a state-only task update. The cost is a last-write-wins window between the read and the resend, accepted because the alternative is a call that simply fails. |
+| D19 | **Pipeline logs are read tail-first, over a byte `Range`, and reduced while streaming.** A step runs under `set -e`, so the failure is the last thing printed; the tool asks for a suffix range and gets the log's full size back in `Content-Range` for free, which is what makes truncation quantified rather than merely flagged. Storage that ignores the header is handled by streaming into a fixed byte ring instead, so memory is bounded by the budget and never by the log; a `416` retries once unranged onto that same path. `HEAD` is never used — the presigned URL is signed for `GET` and answers 403. `pattern` is a literal substring, never a regular expression: the argument comes from a model, and backtracking over a multi-megabyte log is a denial of service against the server that fetched it. Verified against live storage 2026-09-09, including that ranged responses are not compressed. |
+| D20 | **The pipeline surface is read-only, and 403s are scope-aware per tool.** Running or stopping a pipeline needs `pipeline:write` on top of the read scope and spends build minutes; the problem being solved is diagnosis. Reading pipelines needs `pipeline` / `read:pipeline:bitbucket`, which **no existing user's credential has**, so `ToolCallContext` carries a `ToolScope` and `ToolErrors.Forbidden` branches on it: the pipeline message names that scope in both vocabularies, names the `logout`/`login` step (widening a consumer does not widen a cached grant), and offers `listCodeInsights` as a fallback. The pull-request branch is byte-identical to what it was, so nobody else's 403 grew a line. |
+| D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. |
+
+### Risks carried (R3–R5)
+
+Four source files and one test cite these by number; they were never written down, so here they
+are. (R1 and R2 are release-path risks and live under *Release engineering*.)
+
+- **R3 — the OAuth callback host.** Bitbucket compares the redirect URI as a string, and a consumer
+  may have `localhost` registered where the server sends `127.0.0.1`, or the name may resolve to
+  IPv6 first. Mitigated by binding the loopback listener to **both** `127.0.0.1` and `::1` (D12) and
+  by making the host configurable (`BITBUCKET_OAUTH_CALLBACK_HOST`). Cited in
+  `LoopbackCallbackListener.cs`, `BitbucketMcpOptions.cs` and `LoopbackCallbackListenerTests.cs`.
+- **R4 — reporting the outcome of an interactive sign-in.** A browser flow can fail in ways a tool
+  call has no vocabulary for (the user closed the tab, denied consent, or never returned).
+  `InteractiveAuthorizationResult` carries the outcome back explicitly instead of collapsing it into
+  a null or a timeout. Cited in `InteractiveAuthenticator.cs`.
+- **R5 — an inclusive `fields=` list that omits `next` silently stops pagination.** Bitbucket
+  returns page one with no continuation link, so the caller sees a complete-looking result and never
+  learns there was more — and only against a repository large enough to have a second page.
+  Enforced by `FieldSetTests.EveryPaginatedFieldSetRequestsNext`, and explained in full in
+  `FieldSets.cs`. Cited in `FieldSetTests.cs`.
 
 Other locked choices worth restating: Bitbucket **app passwords are dead** (removed 2026-07-28) —
 never implement them. Tool names are **camelCase verbNoun** (`createPullRequest`) via
@@ -70,8 +94,17 @@ writes must set it explicitly `false`. Never call `WithToolsFromAssembly()` (IL2
 The design's tool inventory, in full. `ToolInventoryTests` asserts this set of names and every one
 of these four flags against what an MCP client actually receives, and `Build.cs`'s
 `ExpectedToolNames` asserts the names again over a real `tools/list`, and `AgentSkillTests` asserts
-that the shipped skill names it too. **Adding a tool means editing this table, that test, that array
-and the skill** — all four, or the build fails.
+that the shipped skill names it too. **Adding a tool means editing six places**, and only the first
+four of them fail the build:
+
+1. this table;
+2. `ToolInventoryTests` — `ExpectedToolNames` (ordinal order), the hard-coded tool and class counts,
+   and the title and annotation theories;
+3. `Build.cs`'s `ExpectedToolNames`, which `SmokeTest` checks against a live `tools/list`;
+4. the shipped skill;
+5. `ToolSchemaTests`'s per-tool `[InlineData]` row — a second inventory, of exact parameter names;
+6. `README.md`'s tool table **and** its tool count in the opening paragraph, which nothing enforces
+   at all and which is therefore the one that actually drifts.
 
 `Destructive` is blank on the read tools deliberately: `ReadOnly` already says they change nothing,
 so the SDK omits the hint and the test asserts its *absence*. On a write tool it is never blank —
@@ -80,30 +113,39 @@ before every comment.
 
 | Tool | Class | ReadOnly | Destructive | Idempotent | OpenWorld |
 |---|---|---|---|---|---|
-| `listPullRequests` | read | true | — | true | true |
-| `getPullRequest` | read | true | — | true | true |
-| `getPullRequestDiff` | read | true | — | true | true |
-| `getPullRequestComments` | read | true | — | true | true |
-| `listDefaultReviewers` | read | true | — | true | true |
-| `listPullRequestStatuses` | read | true | — | true | true |
-| `listPullRequestTasks` | read | true | — | true | true |
-| `createPullRequest` | write | false | **false** | false | true |
-| `updatePullRequest` | write | false | true | false | true |
-| `addPullRequestComment` | write | false | **false** | false | true |
-| `resolvePullRequestComment` | write | false | **false** | true | true |
-| `addPullRequestTask` | write | false | **false** | false | true |
-| `updatePullRequestTask` | write | false | **false** | true | true |
-| `setPullRequestReviewStatus` | write | false | **false** | true | true |
-| `mergePullRequest` | write | false | true | false | true |
-| `declinePullRequest` | write | false | true | false | true |
+| `listPullRequests` | pr read | true | — | true | true |
+| `getPullRequest` | pr read | true | — | true | true |
+| `getPullRequestDiff` | pr read | true | — | true | true |
+| `getPullRequestComments` | pr read | true | — | true | true |
+| `listDefaultReviewers` | pr read | true | — | true | true |
+| `listPullRequestStatuses` | pr read | true | — | true | true |
+| `listPullRequestTasks` | pr read | true | — | true | true |
+| `createPullRequest` | pr write | false | **false** | false | true |
+| `updatePullRequest` | pr write | false | true | false | true |
+| `addPullRequestComment` | pr write | false | **false** | false | true |
+| `resolvePullRequestComment` | pr write | false | **false** | true | true |
+| `addPullRequestTask` | pr write | false | **false** | false | true |
+| `updatePullRequestTask` | pr write | false | **false** | true | true |
+| `setPullRequestReviewStatus` | pr write | false | **false** | true | true |
+| `mergePullRequest` | pr write | false | true | false | true |
+| `declinePullRequest` | pr write | false | true | false | true |
+| `listPipelines` | pipeline read | true | — | true | true |
+| `getPipeline` | pipeline read | true | — | true | true |
+| `getPipelineStepLog` | pipeline read | true | — | true | true |
+| `listCodeInsights` | pipeline read | true | — | true | true |
 
-Two of those rows are judgement calls rather than readings of the API:
+Three of those rows are judgement calls rather than readings of the API:
 
 - **`updatePullRequestTask` is non-destructive** even though its `content` argument overwrites a
   task's text irrecoverably — which is exactly why `updatePullRequest` is destructive. The common
   call by a wide margin is the state flip (ticking a task off), and a confirmation prompt in front
   of every tick teaches a user to click through the prompts that matter. The description says the
   text is replaced.
+- **`listCodeInsights` sits in the pipeline class** although its endpoint is a commit one, not a
+  Pipelines one. It answers the same question — why is the build red — and it is the only tool in
+  that class that needs no scope the pull-request tools already hold, which makes it the documented
+  fallback when a pipeline call answers 403. A fourth tool class holding one tool would have bought
+  nothing but another `WithTools<T>` line.
 - **`resolvePullRequestComment` is idempotent**, which it only is because the tool makes it so:
   Bitbucket answers `409` to resolving an already-resolved thread and `404` to reopening one that
   was never resolved, and both are swallowed because the caller asked for an end state and it is
@@ -130,7 +172,7 @@ repository root. That is the load-bearing choice: **an installed plugin cannot r
 outside its own root**, so any narrower source would have forced a second copy of `SKILL.md` or a
 symlink (which a Windows checkout without `core.symlinks` silently turns into a text file). With
 the root as the source, `.claude-plugin/plugin.json` names `./.claude/skills/bitbucket-pull-requests`
-directly. The cost is that installing copies the tracked tree — about 1.4 MB — into the plugin
+directly. The cost is that installing copies the tracked tree — about 1.2 MB — into the plugin
 cache; that is the price of one canonical file, and it was judged worth paying.
 
 The same manifest bundles the MCP server (`dnx bitbucket-mcp@{version} --yes`), so one
@@ -179,7 +221,8 @@ Complete, as of the initial implementation. Versions are centrally pinned in
   `System.Security.Cryptography.ProtectedData` (DPAPI; Windows-only code path).
 - `tests/`: `xunit.v3`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk`. No mocking or
   assertion libraries — use the hand-rolled `StubHttpMessageHandler`.
-- `build/`: `Fallout.Common` + `Fallout.Components` 10.4.0 (the build project opts out of CPM).
+- `build/`: `Fallout.Common` + `Fallout.Components` 10.4.0 and `NuGet.Frameworks` 7.9.0 (see
+  *Package budget changes*; the build project opts out of CPM).
 
 SourceLink needs no package reference — it is in-SDK on .NET 8 and later.
 
@@ -201,9 +244,28 @@ assembly version than the one requested, so an SDK still asking for 6.14.3 is sa
 repository is not dated to one feature band. Remove once Fallout ships a `NuGet.Packaging` new
 enough to bring 7.9.0 in on its own.
 
+**2026-09-09 — routine version bumps; no new package.** `ModelContextProtocol` `[2.1.0]` →
+`[2.2.0]`, the three `Microsoft.Extensions.*` / `System.Security.Cryptography.ProtectedData`
+10.0.10 → 10.0.12, `Microsoft.NET.Test.Sdk` 18.8.1 → 18.10.0. Nothing was added and nothing moved
+between projects. The exact MCP pin moved on evidence rather than on faith: the public metadata of
+`ModelContextProtocol.dll` and `ModelContextProtocol.Core.dll` is **identical** between 2.1.0 and
+2.2.0 — no type or member added or removed — and both versions declare the same eight transitive
+dependencies at the same versions, so the AOT/serializer contract the pin exists to protect cannot
+have changed shape. 2.2.0's two changes (`HttpServerSessionMode`, an `McpHeaderEncoder.DecodeValue`
+fix) are both on the HTTP transport; `HttpServerSessionMode` lives in `ModelContextProtocol.AspNetCore`,
+which this repository does not reference, and the server speaks stdio only. Verified by `Test`
+(which asserts every tool name, title, annotation and generated schema *through* the SDK) and by
+`SmokeTest` (a real `tools/list` against the AOT binary).
+
+**Held deliberately, and not stale:** `xunit.v3` / `xunit.runner.visualstudio` stay at 3.2.2 / 3.1.5
+because 4.0.0 drops the VSTest bridge D11 depends on. `Fallout.Common` / `Fallout.Components` stay
+at 10.4.0 because 11.0.x is the *edge* channel and sorts higher only as a versioning artifact — see
+*Build*. `NuGet.Frameworks` stays pinned because its documented exit condition is unmet: both
+Fallout 10.4.0 and 11.0.18 still resolve `NuGet.Packaging` 6.14.3.
+
 The trusted-publishing exchange (D17) uses `Fallout.Common.Utilities.Net`
 (`CreateRequest` / `WithBearerAuthentication` / `WithJsonContent` / `GetResponse` /
-`AssertResponse` / `GetBodyAsJsonObject`), which arrives with `Fallout.Common` 10.4.0 as the
+`AssertResponse` / `AssertSuccessfulStatusCode` / `GetBodyAsJsonObject`), which arrives with `Fallout.Common` 10.4.0 as the
 transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and nothing added to
 `src/` or `tests/`.
 
@@ -225,18 +287,24 @@ src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-
   Authentication/           ICredentialProvider and both implementations, OAuth token client,
                             refresh state machine, TokenStore, loopback listener, browser launcher
   Http/                     BitbucketApiClient, the handler chain (auth + retry), BitbucketCursor
-                            (SSRF-validated), FieldSets, Page<T>, BitbucketApiException
+                            (SSRF-validated), BitbucketRequestBuilder, FieldSets, Page<T>,
+                            BitbucketApiException, InvalidCursorException
   Http/Models/              Wire DTOs and BitbucketWireJsonContext (snake_case; never chained
                             into the MCP JSON options)
   Diffs/                    UnifiedDiffParser, DiffTruncator, InlineAnchorResolver
-  Tools/                    PullRequestReadTools, PullRequestWriteTools, ToolDefaults, ToolErrors,
-                            ResultMapper, ServerInstructions
+  Pipelines/                LogReducer (tail/head/search + ANSI stripping), LogExcerpt, LogReadMode
+                            — the Diffs/ analogue, and the only novel logic in the pipeline surface
+  Tools/                    PullRequestReadTools, PullRequestWriteTools, PipelineReadTools,
+                            ToolDefaults, ToolErrors, ResultMapper (+ ResultMapper.Pipelines),
+                            ServerInstructions
   Tools/Models/             Result records and BitbucketToolJsonContext (camelCase)
 tests/Bitbucket.Mcp.Tests/  The single test project; internals visible via InternalsVisibleTo
+.github/workflows/          build.yml and publish.yml are GENERATED from the two [GitHubActions]
+                            attributes (hard rule 2); release.yml is hand-written by design
 build/                      The Fallout orchestrator (Build.cs, Build.Publish.cs,
-                            Build.CI.GitHubActions.cs, ReleaseNotesParser.cs, SemVersion.cs) —
-                            `build/` is a resolver convention, and `.gitignore` must never
-                            untrack it
+                            Build.CI.GitHubActions.cs, Configuration.cs, ReleaseNotes.cs,
+                            ReleaseNotesParser.cs, SemVersion.cs, Extensions/) — `build/` is a
+                            resolver convention, and `.gitignore` must never untrack it
 ```
 
 Everything a user can configure is an environment variable read in `Configuration/`; everything a
@@ -244,10 +312,28 @@ user can see is either a tool result shaped in `Tools/Models/` or an error compo
 `Tools/ToolErrors.cs`. Those three files are where a behaviour change becomes user-visible, so
 they are the ones to keep `README.md` in step with.
 
+The **scope lists are duplicated** and nothing enforces their agreement: `ToolErrors.cs` holds
+`RequiredScopes`, `RequiredApiTokenScopes`, `PipelineScope` and `PipelineApiTokenScope`, and
+`README.md` restates all of them in *Tokens* and again in *Troubleshooting*. They have to move
+together. The failure mode worth knowing is that an Atlassian API token created with the plain
+*Create API token* button carries **no** Bitbucket scope at all and answers
+`401 {"error": "API Token provided has no Bitbucket scopes."}` — a string where the documented
+envelope has an object, which is why `ToolErrors.Detail` falls back to the raw body rather than
+dropping the one sentence that explains the failure.
+
 ## Build
 
 The orchestrator is [Fallout](https://fallout.build) 10.4.0 (stable channel), the maintained
-hard fork of NUKE. The CLI is pinned in `.config/dotnet-tools.json` as `fallout.globaltool`
+hard fork of NUKE.
+
+**10.4.0 is not stale, and 11.0.x is not an upgrade.** Fallout runs two channels: `11.0.x` is
+*edge* and `10.4.0` is *stable*, which is newer and a feature superset despite sorting lower. The
+edge CLI ships under a different package id (`Fallout.Cli`), which is why `fallout.globaltool` has
+no 11.x and nothing is behind. Moving `build/` to 11.0.18 would reintroduce
+`System.Security.Cryptography.Xml` 10.0.6 (10.4.0 carries the patched 10.0.10), fail to compile
+because `GitHubActionsAttribute.Env` — which `NUGET_USER` depends on — does not exist there, and
+regenerate both workflows backwards to `checkout@v6` / `setup-dotnet@v4` with the `*Action`
+override properties gone. Do not "update" it. The CLI is pinned in `.config/dotnet-tools.json` as `fallout.globaltool`
 (command `fallout`) and resolves `build/_build.csproj` by convention.
 
 ```powershell
@@ -297,6 +383,13 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   added in four places: that table, `ToolInventoryTests.ExpectedToolNames`, `Build.cs`'s
   `ExpectedToolNames` (which `SmokeTest` checks against a live `tools/list`) and the shipped skill
   (next bullet).
+- **The generated schemas are checked property by property.** `ToolSchemaTests` is the only place
+  that asserts no injected parameter (`client` / `options` / `cancellationToken`) leaks into an
+  input schema, that every input *and* output property is camelCase and carries a description, that
+  every tool has an object output schema, that every paginated result carries `nextCursor`, and
+  D6's resolver ordering (ours first, SDK second, chain read-only). Its per-tool `[InlineData]` row
+  is a second inventory — of exact parameter names, in declaration order — so a reordered parameter
+  fails here and nowhere else.
 - **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
   outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
 - **The shipped skill names the tools that exist, and all of them.** `AgentSkillTests` reads
@@ -305,7 +398,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   directions: a name no tool answers to fails, and so does a tool the skill never mentions. Tool
   *parameter* names are excluded by reflection, not by a list, so `mergeStrategy` does not read as a
   missing tool. Nothing else loads that file, so without this it would keep advertising an older
-  surface — the inventory grew from ten tools to sixteen during development, and a skill written
+  surface — the inventory grew from ten tools to sixteen during development and to twenty since, and a skill written
   before that would still have read as correct. It is therefore a **fourth** place a new tool has to
   be added, after the *Tool table*, `ToolInventoryTests` and `Build.cs`. The frontmatter is checked
   too: `name` must equal the directory name and satisfy the Agent Skills spec's charset, and
@@ -325,7 +418,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
 
 `SmokeTest` is the end-to-end check the unit tests cannot be: it publishes the Native AOT binary,
 spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
-over stdio, asserting `serverInfo.name` and all sixteen tool names. CI runs `Test` and `SmokeTest`
+over stdio, asserting `serverInfo.name` and all twenty tool names. CI runs `Test` and `SmokeTest`
 on every push and pull request.
 
 ## Release engineering

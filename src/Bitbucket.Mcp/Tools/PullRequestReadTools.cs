@@ -293,11 +293,13 @@ internal sealed class PullRequestReadTools
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "Lists the people Bitbucket adds as reviewers on a new pull request in this repository, with their " +
-        "account UUIDs. This is where reviewer UUIDs come from when there is no pull request to read them off " +
-        "— createPullRequest and updatePullRequest accept UUIDs and nothing else. Covers both the " +
-        "repository's own default reviewers and the ones it inherits from its project (reviewerType says " +
-        "which). Results are paginated: pass the returned nextCursor back as cursor for the next page.")]
+        "Lists the repository's configured default reviewers with their account UUIDs. This is where reviewer " +
+        "UUIDs come from when there is no pull request to read them off — createPullRequest and " +
+        "updatePullRequest accept UUIDs and nothing else. Covers both the repository's own default reviewers " +
+        "and the ones it inherits from its project (reviewerType says which). This is NOT a step in opening a " +
+        "pull request: call it only when the user asked for reviewers, or to look a UUID up. Listing them " +
+        "does not mean passing them to createPullRequest. Results are paginated: pass the returned nextCursor " +
+        "back as cursor for the next page.")]
     public static async Task<DefaultReviewerListResult> ListDefaultReviewersAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,

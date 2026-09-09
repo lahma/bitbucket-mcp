@@ -34,6 +34,15 @@ internal sealed record BitbucketMcpOptions
     /// <summary>Default cap on the total number of diff lines returned by one call.</summary>
     internal const int DefaultMaxDiffLines = 4000;
 
+    /// <summary>Default for <see cref="MaxLogLines"/>.</summary>
+    internal const int DefaultMaxLogLines = 200;
+
+    /// <summary>
+    /// Default for <see cref="MaxLogBytes"/>: 256 KiB, which comfortably holds 200 lines of any
+    /// realistic build output and bounds what a single log read costs in memory.
+    /// </summary>
+    internal const int DefaultMaxLogBytes = 256 * 1024;
+
     /// <summary>Default minimum log level.</summary>
     internal const LogLevel DefaultLogLevel = LogLevel.Information;
 
@@ -101,6 +110,15 @@ internal sealed record BitbucketMcpOptions
     /// <summary><c>BITBUCKET_MCP_MAX_DIFF_LINES</c> — diff truncation default, per response.</summary>
     internal int MaxDiffLines { get; init; } = DefaultMaxDiffLines;
 
+    /// <summary><c>BITBUCKET_MCP_MAX_LOG_LINES</c> — pipeline log lines returned per call.</summary>
+    internal int MaxLogLines { get; init; } = DefaultMaxLogLines;
+
+    /// <summary>
+    /// <c>BITBUCKET_MCP_MAX_LOG_BYTES</c> — the byte budget for one log read, and therefore the
+    /// upper bound on what a log costs in memory however large the file is.
+    /// </summary>
+    internal int MaxLogBytes { get; init; } = DefaultMaxLogBytes;
+
     /// <summary>Reads the options from the process environment.</summary>
     internal static BitbucketMcpOptions FromEnvironment() =>
         FromEnvironment(static name => Environment.GetEnvironmentVariable(name));
@@ -130,6 +148,8 @@ internal sealed record BitbucketMcpOptions
             LogLevel = ReadLogLevel(read, "BITBUCKET_MCP_LOG_LEVEL", DefaultLogLevel),
             MaxLinesPerFile = ReadInt32(read, "BITBUCKET_MCP_MAX_LINES_PER_FILE", DefaultMaxLinesPerFile, 1, 100_000),
             MaxDiffLines = ReadInt32(read, "BITBUCKET_MCP_MAX_DIFF_LINES", DefaultMaxDiffLines, 1, 1_000_000),
+            MaxLogLines = ReadInt32(read, "BITBUCKET_MCP_MAX_LOG_LINES", DefaultMaxLogLines, 1, 5_000),
+            MaxLogBytes = ReadInt32(read, "BITBUCKET_MCP_MAX_LOG_BYTES", DefaultMaxLogBytes, 4_096, 8 * 1024 * 1024),
         };
     }
 
