@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
   "name": "io.github.lahma/bitbucket-mcp",
-  "description": "Bitbucket Cloud pull requests over MCP: list, read, diff, comment, review, merge and decline.",
+  "description": "Bitbucket Cloud pull requests and Pipelines over MCP: list, read, diff, comment, review, merge and decline, plus find a failing build, the step that broke and the line of its log that says why.",
   "version": "1.2.0",
   "repository": {
     "url": "https://github.com/lahma/bitbucket-mcp",
