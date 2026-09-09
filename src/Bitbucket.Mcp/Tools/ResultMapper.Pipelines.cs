@@ -69,6 +69,7 @@ internal static partial class ResultMapper
     internal static PipelineDetail Pipeline(
         PipelineDto dto,
         IReadOnlyList<PipelineStepDto> steps,
+        bool moreSteps,
         string workspace,
         string repositorySlug)
     {
@@ -105,7 +106,7 @@ internal static partial class ResultMapper
             Url = PipelineUrl(workspace, repositorySlug, dto.BuildNumber),
             Steps = mapped,
             FailedStepUuid = failed?.Uuid,
-            Hint = Next(failed, state, dto.Target?.Commit?.Hash),
+            Hint = Next(failed, state, dto.Target?.Commit?.Hash, moreSteps),
         };
     }
 
@@ -163,14 +164,24 @@ internal static partial class ResultMapper
             : null;
 
     /// <summary>Names the call worth making next, when there is an obvious one.</summary>
-    private static string? Next(PipelineStepSummary? failed, string? state, string? commit)
+    private static string? Next(PipelineStepSummary? failed, string? state, string? commit, bool moreSteps)
     {
+        // A pipeline can carry more steps than one page holds. Saying so is the same rule the diff
+        // tools follow: a truncated answer must never read like a complete one.
+        var overflow = moreSteps
+            ? $" This run has more than {ToolDefaults.MaxPageSize} steps and only the first "
+              + $"{ToolDefaults.MaxPageSize} are listed."
+            : string.Empty;
+
         if (failed is null)
         {
-            return state is "SUCCESSFUL" or null
-                ? null
-                : "No step reported a failure. If the run is still going, call getPipeline again; a STOPPED "
-                  + "run was cancelled rather than broken.";
+            if (state is "SUCCESSFUL" or null)
+            {
+                return moreSteps ? overflow.TrimStart() : null;
+            }
+
+            return "No step reported a failure. If the run is still going, call getPipeline again; a STOPPED "
+                + "run was cancelled rather than broken." + overflow;
         }
 
         // An error message from Bitbucket usually is the diagnosis, so the log is offered as the
@@ -185,7 +196,7 @@ internal static partial class ResultMapper
             ? $" listCodeInsights with commit=\"{commit}\" may name the failing file and line directly."
             : string.Empty;
 
-        return opening + next + insights;
+        return opening + next + insights + overflow;
     }
 
     /// <summary>Maps a reduced log into the tool's result.</summary>

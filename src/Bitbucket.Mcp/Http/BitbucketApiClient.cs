@@ -591,7 +591,7 @@ internal sealed class BitbucketApiClient : IDisposable
 
         var ranged = mode is not LogReadMode.Search;
 
-        var response = await SendLogAsync(url, mode, maxLines, byteBudget, ranged, cancellationToken)
+        var response = await SendLogAsync(url, mode, byteBudget, ranged, cancellationToken)
             .ConfigureAwait(false);
 
         try
@@ -601,7 +601,7 @@ internal sealed class BitbucketApiClient : IDisposable
             if ((int) response.StatusCode == 416)
             {
                 response.Dispose();
-                response = await SendLogAsync(url, mode, maxLines, byteBudget, ranged: false, cancellationToken)
+                response = await SendLogAsync(url, mode, byteBudget, ranged: false, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -634,7 +634,6 @@ internal sealed class BitbucketApiClient : IDisposable
     private async Task<HttpResponseMessage> SendLogAsync(
         string url,
         LogReadMode mode,
-        int maxLines,
         long byteBudget,
         bool ranged,
         CancellationToken cancellationToken)
@@ -653,9 +652,13 @@ internal sealed class BitbucketApiClient : IDisposable
 
         if (ranged)
         {
-            _ = mode is LogReadMode.Head
-                ? request.Headers.Range = new RangeHeaderValue(0, byteBudget - 1)
-                : request.Headers.Range = new RangeHeaderValue(null, byteBudget);
+            // A suffix range (bytes=-N) is what makes the tail one request rather than two: the
+            // response carries Content-Range, so the log's full size arrives with the bytes instead
+            // of needing a HEAD — which the presigned storage URL refuses anyway, being signed for
+            // GET alone.
+            request.Headers.Range = mode is LogReadMode.Head
+                ? new RangeHeaderValue(0, byteBudget - 1)
+                : new RangeHeaderValue(null, byteBudget);
         }
 
         var attempts = new RetryAttemptCounter();

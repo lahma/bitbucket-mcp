@@ -206,6 +206,25 @@ public sealed class PipelineToolTests
         Assert.Contains("{951411fa-aa47-472c-80ce-4f4f4899d1b3}", result.Hint!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A run can carry more steps than one page holds, and a truncated step list must not read like
+    /// a complete one — the same rule the diff tools follow.
+    /// </summary>
+    [Fact]
+    public async Task AStepListCutShortByPagingSaysSo()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(PipelineFixtures.Pipeline);
+        handler.EnqueueJson(PipelineFixtures.StepPageWithMore);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PipelineReadTools.GetPipelineAsync(
+            client, ToolTestHost.CreateOptions(), Repository, "8173", Workspace, TestContext.Current.CancellationToken);
+
+        Assert.Contains("only the first", result.Hint!, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("8173", "/pipelines/8173")]
     [InlineData("#8173", "/pipelines/8173")]
@@ -644,6 +663,21 @@ internal static class PipelineFixtures
               "uuid": "{951411fa-aa47-472c-80ce-4f4f4899d1b4}",
               "name": "Deploy",
               "state": { "name": "COMPLETED", "result": { "name": "NOT_RUN" } }
+            }
+          ]
+        }
+        """;
+
+    /// <summary>A step page that reports a continuation, so the list is knowingly incomplete.</summary>
+    internal const string StepPageWithMore = """
+        {
+          "size": 120,
+          "next": "https://api.bitbucket.org/2.0/repositories/acme/widgets/pipelines/8173/steps?page=2",
+          "values": [
+            {
+              "uuid": "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
+              "name": "Test and Build",
+              "state": { "name": "COMPLETED", "result": { "name": "SUCCESSFUL" } }
             }
           ]
         }

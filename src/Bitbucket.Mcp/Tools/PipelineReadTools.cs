@@ -145,7 +145,7 @@ internal sealed class PipelineReadTools
                     resolvedWorkspace, slug, id, ToolDefaults.MaxPageSize, cursor: null, cancellationToken)
                 .ConfigureAwait(false);
 
-            return ResultMapper.Pipeline(dto, steps.Items, resolvedWorkspace, slug);
+            return ResultMapper.Pipeline(dto, steps.Items, steps.NextCursor is not null, resolvedWorkspace, slug);
         }).ConfigureAwait(false);
     }
 
