@@ -1,16 +1,18 @@
 # bitbucket-mcp
 
 A self-owned [Model Context Protocol](https://modelcontextprotocol.io) server for **Bitbucket
-Cloud**, covering the full pull-request lifecycle in sixteen tools — list, read, diff, comment,
-resolve, task, review, create, update, merge, decline — including the gaps in Atlassian's own
-Bitbucket tools (update, decline, request changes, unapprove, diffstat, inline comments, thread
-resolution, tasks, build statuses, default reviewers). It is written in C# on
-.NET 10 and ships as a Native AOT binary per platform: one self-contained executable, about 18 MB
-on win-x64 (6 MB in the release archive), starting in roughly ten milliseconds. The point of the
-project is a supply chain one person can actually audit — the whole runtime dependency tree is
-four packages, all from Microsoft or the official MCP organisation:
+Cloud**, covering the full pull-request lifecycle and Bitbucket Pipelines build diagnosis in twenty
+tools — list, read, diff, comment, resolve, task, review, create, update, merge, decline, and then
+find the failing build, the failing step and the line of its log that explains it. It includes the
+gaps in Atlassian's own Bitbucket tools (update, decline, request changes, unapprove, diffstat,
+inline comments, thread resolution, tasks, build statuses, default reviewers, pipeline logs, code
+insights). It is written in C# on .NET 10 and ships as a Native AOT binary per platform: one
+self-contained executable, about 18 MB on win-x64 (6 MB in the release archive), starting in
+roughly ten milliseconds. The point of the project is a supply chain one person can actually audit
+— four direct package references over a transitive closure of seventeen, every one of them from
+Microsoft or the official MCP organisation:
 [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) (pinned exactly to
-2.1.0), `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console` and
+2.2.0), `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console` and
 `System.Security.Cryptography.ProtectedData`. Tool names follow Atlassian's camelCase verbNoun
 convention, so it sits alongside the official Atlassian MCP server without a naming clash. MIT
 licensed.
@@ -28,7 +30,7 @@ Bitbucket Data Center is explicitly out of scope.
 | `listDefaultReviewers` | Lists the repository's effective default reviewers with their account UUIDs, including the ones inherited from its project. Where reviewer UUIDs come from when there is no pull request to read them off. | read-only, idempotent |
 | `listPullRequestStatuses` | Lists the build statuses reported against a pull request — the merge-readiness check to run before `mergePullRequest`. | read-only, idempotent |
 | `listPullRequestTasks` | Lists a pull request's tasks, `RESOLVED` or `UNRESOLVED` — the outstanding work, which the comments alone do not tell you. | read-only, idempotent |
-| `createPullRequest` | Opens a new pull request. Title and source branch are required; reviewers are account UUIDs. | write, **not** destructive |
+| `createPullRequest` | Opens a new pull request. Title and source branch are required, and `closeSourceBranch` and `draft` are settable here. Reviewers are account UUIDs and are entirely optional: omit `reviewers` for the repository's own default-reviewer rule, or pass `[]` to open it with nobody on it. | write, **not** destructive |
 | `updatePullRequest` | Changes an existing pull request's title, description, destination branch, reviewer list, `closeSourceBranch` flag or `draft` status. `reviewers` replaces the whole list; the two flags are only reachable here once the pull request is open. | write, destructive |
 | `addPullRequestComment` | Posts a comment: general, a reply, or inline on a line of the diff — anchored by `codeSnippet` copied verbatim out of the diff, or by `line` plus `lineType`. | write, **not** destructive |
 | `resolvePullRequestComment` | Marks a comment thread resolved, or reopens it — any top-level comment, inline or on the pull request as a whole. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
@@ -37,6 +39,15 @@ Bitbucket Data Center is explicitly out of scope.
 | `setPullRequestReviewStatus` | Sets the authenticated user's own review state: `APPROVED`, `CHANGES_REQUESTED` or `UNAPPROVED` (clears both flags). | write, **not** destructive, idempotent |
 | `mergePullRequest` | Merges a pull request into its destination branch, with an optional merge strategy. | write, destructive |
 | `declinePullRequest` | Declines a pull request, closing it without merging. | write, destructive |
+| `listPipelines` | Lists a repository's pipeline runs, newest first, filterable by branch, commit or state — the answer to "is CI green?", and the bridge from a pull request to its builds. | read-only, idempotent |
+| `getPipeline` | Reads one run with its steps: which step failed, its `errorMessage`, and the `stepUuid` to read next. Often the whole answer without touching a log. | read-only, idempotent |
+| `getPipelineStepLog` | Reads a step's build log — the **end** by default, where a step running under `set -e` reports what broke, or the lines matching `pattern` anywhere in it. Always truncated, always visibly. | read-only, idempotent |
+| `listCodeInsights` | Lists a commit's Code Insights reports and the file-and-line findings behind the failing ones — the one build signal that points at the code rather than at a log. | read-only, idempotent |
+
+The four pipeline tools are read-only by design: running or stopping a build needs a write scope on
+top of the read one and spends the workspace's build minutes, and the problem they exist for is
+diagnosis. Reading pipelines does need one scope the pull-request tools do not — see
+*[Authentication](#authentication)*.
 
 Every tool is annotated open-world (it talks to a live Bitbucket workspace) and returns structured
 content. `Destructive` defaults to *true* in the MCP SDK, so the six write tools that do not
@@ -66,7 +77,7 @@ named `bitbucket-mcp-{version}-{rid}` and contains the executable, `LICENSE` and
 | macOS Apple silicon | `osx-arm64` | `bitbucket-mcp-{version}-osx-arm64.tar.gz` |
 
 ```bash
-tar -xzf bitbucket-mcp-1.0.0-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.2.0-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -90,7 +101,7 @@ The same server is published to nuget.org as
 there is nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.0.0 --yes status
+dnx bitbucket-mcp@1.2.0 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -103,7 +114,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.0.0", "--yes"],
+      "args": ["bitbucket-mcp@1.2.0", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -113,7 +124,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.0.0`) rather than floating: an MCP server is something an agent runs on your
+Pin the version (`@1.2.0`) rather than floating: an MCP server is something an agent runs on your
 behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
 needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
 missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
@@ -174,6 +185,7 @@ Then:
    - **Account**: Read
    - **Repositories**: Read and Write
    - **Pull requests**: Read and Write
+   - **Pipelines**: Read — only if you want the pipeline tools
 4. **Save**, then expand the new consumer to read its **Key** and **Secret**.
 5. Put them in the environment:
 
@@ -255,6 +267,11 @@ Choose **Bitbucket** as the app, then grant all four of these scopes:
 - `read:pullrequest:bitbucket`
 - `write:pullrequest:bitbucket`
 
+Add `read:pipeline:bitbucket` as a fifth if you want the pipeline tools. Reading Bitbucket
+Pipelines is a separate permission from reading the repository, so a token holding only the four
+above answers 403 on `listPipelines`, `getPipeline` and `getPipelineStepLog` — `listCodeInsights`
+keeps working, because it reads the commit rather than the pipeline.
+
 The `:bitbucket` suffix is part of the scope id, not a description of it. The scopes do **not**
 imply one another: creating, updating, commenting on, approving, merging or declining a pull
 request needs `read:pullrequest:bitbucket` *and* `write:pullrequest:bitbucket`, and a write scope
@@ -269,11 +286,12 @@ export BITBUCKET_EMAIL=you@example.com
 export BITBUCKET_API_TOKEN=...
 ```
 
-Do **not** put an API token in `BITBUCKET_ACCESS_TOKEN`: that variable is sent as `Bearer`, and
-Bitbucket answers 401 *"Token is invalid, expired, or not supported for this endpoint"*. `Bearer` is
-for OAuth access tokens and for workspace, project and repository access tokens. With the four
-scopes above and Basic auth, an API token drives every operation this server performs, writes
-included.
+`BITBUCKET_ACCESS_TOKEN` also works for an API token — Atlassian added `Bearer` support for them on
+2026-08-18, and this server verifies it. The `BITBUCKET_EMAIL` + `BITBUCKET_API_TOKEN` pair remains
+the documented path because it is what `bitbucket-mcp status` reports and what pairs with the rest
+of this section; either way it is the **scopes** that decide whether a call succeeds, not which
+header carried the token. With the scopes above, an API token drives every operation this server
+performs, writes included.
 
 Tokens are read from the environment only. Nothing is cached, and `bitbucket-mcp login` is neither
 needed nor used in this mode.
@@ -367,6 +385,8 @@ to report it — stdout is the protocol channel).
 | `BITBUCKET_MCP_LOG_LEVEL` | `Information` | Minimum level for the stderr logger: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, `None`. |
 | `BITBUCKET_MCP_MAX_LINES_PER_FILE` | `400` | Diff lines returned per file before truncation (1–100000). Overridable per call with `maxLinesPerFile`. |
 | `BITBUCKET_MCP_MAX_DIFF_LINES` | `4000` | Diff lines returned per response before truncation (1–1000000). |
+| `BITBUCKET_MCP_MAX_LOG_LINES` | `200` | Pipeline log lines returned per call (1–5000). Overridable per call with `maxLines`. |
+| `BITBUCKET_MCP_MAX_LOG_BYTES` | `262144` | Byte budget for one log read (4096–8388608), and therefore the upper bound on what a log costs in memory however large the file is. |
 
 ## Usage
 
@@ -476,6 +496,30 @@ A review, end to end:
    does not require it, so this is the check to make before `mergePullRequest`. An empty list means
    nothing has reported yet — which is not the same as passing.
 
+9. **When the build is red, find out why.**
+
+   ```text
+   listPipelines { "repository": "my-repo", "targetBranch": "feature/clamp" }
+   getPipeline   { "repository": "my-repo", "pipeline": "8173" }
+   ```
+
+   `getPipeline` returns the run's steps, `failedStepUuid`, and each step's `errorMessage` — which
+   is frequently the whole answer ("the step timed out", "the image could not be pulled") without
+   reading a log at all. When it is not, the log is next:
+
+   ```text
+   getPipelineStepLog {
+     "repository": "my-repo", "pipeline": "8173",
+     "stepUuid": "{951411fa-aa47-472c-80ce-4f4f4899d1b3}"
+   }
+   ```
+
+   That returns the **end** of the log, because a step runs under `set -e` and the last thing
+   printed is the thing that broke. Pass `pattern` to search the whole log for a literal string
+   instead. Either way the response is capped, the cut is marked inside the text, and `truncated`
+   says so. `listCodeInsights` with the run's `commitHash` is often faster than any of it: a linter
+   or test reporter names the file, the line and the message directly.
+
 Two conventions worth repeating, because they are what the server's `initialize` instructions
 spend their budget on:
 
@@ -563,6 +607,12 @@ the plugin's skill path still resolves, that its version is the one in `CHANGELO
 Start with `bitbucket-mcp status`: it prints which credential would win, the exact callback URL
 the server will use, the token cache path and what is in it — and none of the values.
 
+**401 with "API Token provided has no Bitbucket scopes."** The token is valid; it simply has no
+Bitbucket permission attached, which is what the plain *Create API token* button produces. Signing
+in again will not help and neither will changing which variable holds it. Create a new one with
+**Create API token with scopes**, choose *Bitbucket* as the app, and grant the scopes listed under
+*[Tokens](#tokens)* — a token's scopes cannot be edited after it is created.
+
 **403 Forbidden on a pull-request write.** It is not an endpoint limitation. Every Bitbucket
 pull-request endpoint this server calls — create, update, comment, approve, request changes, merge,
 decline — accepts an Atlassian API token, and the old "this endpoint does not support token-based
@@ -577,12 +627,21 @@ authentication" advice no longer applies. Check three things, in this order:
    `pullrequest`, `pullrequest:write`, `repository` and `repository:write` on the wire. After
    widening a consumer's permissions, run `bitbucket-mcp logout` then `bitbucket-mcp login`: the
    cached grant still carries the old scopes.
-2. **Basic, not Bearer.** An API token goes in `BITBUCKET_EMAIL` + `BITBUCKET_API_TOKEN`, which the
-   server sends as `Basic base64(email:token)`. The same token in `BITBUCKET_ACCESS_TOKEN` is sent
-   as `Bearer` and Bitbucket rejects it. `bitbucket-mcp status` prints which variable is in effect.
+2. **Not the header.** An API token works both as `Basic` (`BITBUCKET_EMAIL` +
+   `BITBUCKET_API_TOKEN`) and as `Bearer` (`BITBUCKET_ACCESS_TOKEN`) — Bitbucket has accepted both
+   since 2026-08 — so a 403 is never explained by which variable was used. `bitbucket-mcp status`
+   prints which one is in effect. (Older guides that say Bearer is rejected predate the change.)
 3. **The account's own access.** Scopes cannot grant more than the account has: the user the
    credential belongs to needs write access to the repository. A 403 that survives the first two
    checks is usually this one.
+
+**403 Forbidden on a pipeline tool.** Different cause from the one above: reading Bitbucket
+Pipelines needs a scope the pull-request tools never asked for, so any credential created before
+these tools existed will answer 403 no matter what repository access it has. Add **Pipelines: Read**
+(`pipeline`) to the OAuth consumer, then run `bitbucket-mcp logout` and `bitbucket-mcp login` —
+widening a consumer does **not** widen a grant that was already cached. For an API token the scope
+is `read:pipeline:bitbucket`, and because scopes cannot be edited that means a new token.
+`listCodeInsights` needs neither and often names the failing file and line anyway.
 
 **HTTP 555, "diff too large".** Bitbucket refuses to build diffs beyond roughly 8,000 changed
 lines or 200 files, and retrying never helps. Call `getPullRequestDiff` with no `paths` to list the
@@ -664,15 +723,18 @@ stderr; MCP clients usually surface it in a server log pane.
   `api.bitbucket.org`. A redirect anywhere else is still followed, but as an anonymous request. The
   header is never set on the `HttpClient` itself, so nothing can leak by default.
 
-- **The supply chain is four runtime packages**, all from Microsoft or the official MCP
-  organisation, centrally pinned in `Directory.Packages.props` with transitive pinning on, and the
-  MCP SDK pinned to an exact version. Adding one requires a recorded decision in
+- **The supply chain is four direct package references**, resolving to a transitive closure of
+  seventeen — every one of them from Microsoft or the official MCP organisation. All of it is
+  centrally pinned in `Directory.Packages.props` with transitive pinning on, and the MCP SDK is
+  pinned to an exact version. Adding one requires a recorded decision in
   [AGENTS.md](AGENTS.md). Builds are deterministic and SourceLink-enabled, so a release binary can
   be traced back to the commit it came from.
 
 ## Building from source
 
-Needs the .NET 10 SDK (the exact version is pinned in `global.json`).
+Needs the .NET 10 SDK. `global.json` sets `10.0.100` as the baseline and rolls forward to the
+newest installed 10.0.x feature band — deliberately a floor rather than a pin, which is what lets
+the build pick up a newer SDK without a repository change.
 
 ```bash
 git clone https://github.com/lahma/bitbucket-mcp.git

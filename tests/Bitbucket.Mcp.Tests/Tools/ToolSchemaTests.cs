@@ -49,6 +49,22 @@ public class ToolSchemaTests
         "repository,workspace,state,author,sourceBranch,pageSize,cursor",
         "repository")]
     [InlineData(
+        "listPipelines",
+        "repository,workspace,targetBranch,commit,status,pageSize,cursor",
+        "repository")]
+    [InlineData(
+        "getPipeline",
+        "repository,pipeline,workspace",
+        "repository,pipeline")]
+    [InlineData(
+        "getPipelineStepLog",
+        "repository,pipeline,stepUuid,workspace,mode,pattern,contextLines,maxLines",
+        "repository,pipeline,stepUuid")]
+    [InlineData(
+        "listCodeInsights",
+        "repository,commit,workspace,reportId,maxAnnotations,pageSize,cursor",
+        "repository,commit")]
+    [InlineData(
         "listDefaultReviewers",
         "repository,workspace,pageSize,cursor",
         "repository")]
@@ -200,6 +216,8 @@ public class ToolSchemaTests
     [InlineData("listDefaultReviewers", "nextCursor")]
     [InlineData("listPullRequestStatuses", "nextCursor")]
     [InlineData("listPullRequestTasks", "nextCursor")]
+    [InlineData("listPipelines", "nextCursor")]
+    [InlineData("listCodeInsights", "nextCursor")]
     public void PaginatedOutputSchemasCarryTheCursor(string name, string cursorProperty)
     {
         var outputSchema = ToolTestHost.Find(name).ProtocolTool.OutputSchema;

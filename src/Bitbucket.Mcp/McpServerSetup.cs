@@ -103,7 +103,8 @@ internal static class McpServerSetup
             // These also populate the tool collection, which is what makes the server advertise the
             // `tools` capability and answer `tools/list`.
             .WithTools<PullRequestReadTools>(jsonOptions)
-            .WithTools<PullRequestWriteTools>(jsonOptions);
+            .WithTools<PullRequestWriteTools>(jsonOptions)
+            .WithTools<PipelineReadTools>(jsonOptions);
 
         await using var provider = services.BuildServiceProvider();
 

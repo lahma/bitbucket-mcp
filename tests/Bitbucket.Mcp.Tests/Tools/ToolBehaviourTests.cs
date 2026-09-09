@@ -1264,6 +1264,109 @@ public class ToolBehaviourTests
     }
 
     /// <summary>
+    /// Omitting <c>reviewers</c> leaves the field out, so Bitbucket applies whatever
+    /// default-reviewer rule the repository carries. Passing an empty array sends
+    /// <c>"reviewers": []</c>, which is the only way to say "nobody" — the two must not collapse
+    /// into each other.
+    /// </summary>
+    [Fact]
+    public async Task OmittingReviewersLeavesTheFieldOutEntirely()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.CreatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            "Clamp the widget size",
+            "feature/clamp",
+            Workspace,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var body = Assert.Single(handler.Requests).Body!;
+
+        Assert.DoesNotContain("\"reviewers\"", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnEmptyReviewerArrayOpensThePullRequestWithNobodyOnIt()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.CreatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            "Clamp the widget size",
+            "feature/clamp",
+            Workspace,
+            reviewers: [],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var body = Assert.Single(handler.Requests).Body!;
+
+        Assert.Contains("\"reviewers\":[]", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An array of nothing but blanks is still an array: the caller typed one, so it means the
+    /// empty list rather than "unspecified".
+    /// </summary>
+    [Fact]
+    public async Task AnArrayOfBlankReviewersIsStillTheEmptyList()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.CreatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            "Clamp the widget size",
+            "feature/clamp",
+            Workspace,
+            reviewers: ["   ", ""],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("\"reviewers\":[]", Assert.Single(handler.Requests).Body!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Clearing a reviewer list was previously inexpressible — an empty array folded to null and
+    /// the field was omitted, which the arity guard then read as "nothing to update".
+    /// </summary>
+    [Fact]
+    public async Task AnEmptyReviewerArrayClearsTheListOnUpdateAndSatisfiesTheArityGuard()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestDetail);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestWriteTools.UpdatePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            reviewers: [],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var body = Assert.Single(handler.Requests).Body!;
+
+        Assert.Contains("\"reviewers\":[]", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"title\"", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The regression behind issue #1: both flags round-trip through the wire model correctly and
     /// were simply never bound, so passing one was accepted, answered 200, and changed nothing.
     /// </summary>

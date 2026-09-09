@@ -20,11 +20,33 @@ namespace Bitbucket.Mcp.Tools;
 /// <param name="Workspace">The resolved workspace slug.</param>
 /// <param name="Repository">The repository slug.</param>
 /// <param name="PullRequestId">The pull request number, when the call had one.</param>
+/// <param name="Scope">Which Bitbucket scope family the call needs, for a 403 that names the right one.</param>
+/// <param name="Resource">What the call was looking for, for a 404 that says so. Free text.</param>
 internal readonly record struct ToolCallContext(
     string Tool,
     string? Workspace = null,
     string? Repository = null,
-    int? PullRequestId = null);
+    int? PullRequestId = null,
+    ToolScope Scope = ToolScope.PullRequest,
+    string? Resource = null);
+
+/// <summary>
+/// Which family of Bitbucket scopes a tool needs, so a 403 can name the one that is actually
+/// missing.
+/// </summary>
+/// <remarks>
+/// The pipeline endpoints need a scope the pull-request tools never asked for, which means every
+/// credential created before those tools existed answers 403 — and a 403 that recites the
+/// pull-request scopes would send that user looking in the wrong place entirely.
+/// </remarks>
+internal enum ToolScope
+{
+    /// <summary>The pull-request and repository scopes every tool needed before pipelines existed.</summary>
+    PullRequest,
+
+    /// <summary>Additionally the Pipelines read scope.</summary>
+    Pipeline,
+}
 
 /// <summary>
 /// The single place an exception becomes something the model can act on.
@@ -55,11 +77,20 @@ internal static class ToolErrors
     private const string RequiredApiTokenScopes =
         "read:repository:bitbucket, write:repository:bitbucket, read:pullrequest:bitbucket, write:pullrequest:bitbucket";
 
+    /// <summary>The extra OAuth scope the pipeline tools need, in Bitbucket's own spelling.</summary>
+    private const string PipelineScope = "pipeline";
+
+    /// <summary>The same permission as an Atlassian API token scope.</summary>
+    private const string PipelineApiTokenScope = "read:pipeline:bitbucket";
+
     /// <summary>
     /// Bitbucket's non-standard status for "the diff is too big to generate". Not in
     /// <see cref="HttpStatusCode"/>, so it is matched numerically.
     /// </summary>
     private const int DiffTooLargeStatus = 555;
+
+    /// <summary>How much of an unparsed response body is quoted back to the caller.</summary>
+    private const int MaxRawDetailLength = 300;
 
     /// <summary>
     /// Where the unexpected-exception branch logs its stack trace. Assigned once from
@@ -92,9 +123,19 @@ internal static class ToolErrors
         {
             return await operation().ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException cancellation)
+            when (cancellation.CancellationToken.IsCancellationRequested)
         {
+            // A genuine cancellation: the client asked, and the SDK's cancellation path — not an
+            // error result — is the right answer.
             throw;
+        }
+        catch (OperationCanceledException timeout)
+        {
+            // HttpClient reports its own RequestTimeout as a TaskCanceledException with nobody's
+            // token cancelled. Rethrowing that as cancellation tells the caller they cancelled a
+            // call they were waiting on, which is both wrong and unactionable.
+            throw new McpException(Timeout(context), timeout);
         }
         catch (McpException)
         {
@@ -251,8 +292,13 @@ internal static class ToolErrors
         Append(message, detail);
 
         message
-            .Append("\nThe token is missing, expired or revoked. Run `bitbucket-mcp login` to sign in again, ")
-            .Append("or replace BITBUCKET_ACCESS_TOKEN / BITBUCKET_API_TOKEN in this server's environment.")
+            .Append("\nThe token is missing, expired, revoked — or was created without any Bitbucket scope at ")
+            .Append("all, which Bitbucket reports as \"API Token provided has no Bitbucket scopes\" and which ")
+            .Append("no amount of signing in will fix. An Atlassian API token has to be created with the ")
+            .Append("Create API token with scopes button; the plain button makes an unscoped one that cannot ")
+            .Append("call this API. Scopes cannot be added afterwards, so that means a new token.")
+            .Append("\nOtherwise: run `bitbucket-mcp login` to sign in again, or replace ")
+            .Append("BITBUCKET_ACCESS_TOKEN / BITBUCKET_API_TOKEN in this server's environment.")
             .Append("\nBitbucket has required auth headers since 2026-05: a token in a URL or a body is a 401.");
 
         return message.ToString();
@@ -263,13 +309,57 @@ internal static class ToolErrors
         var message = new StringBuilder("Bitbucket refused this operation (403 Forbidden).");
         Append(message, detail);
 
+        // A pipeline 403 is almost always one specific thing — a credential that predates these
+        // tools — so it gets its own diagnosis rather than the general scopes-or-access one. The
+        // branch below is left exactly as it was, so no pull-request 403 grows a line.
+        if (context.Scope is ToolScope.Pipeline)
+        {
+            message
+                .Append("\nReading Bitbucket Pipelines needs a scope the pull-request tools do not, so a ")
+                .Append("credential created before these tools existed will not have it. This is very likely ")
+                .Append("not a repository-permission problem.")
+                .Append("\n  OAuth consumer: add Pipelines: Read (scope ").Append(PipelineScope)
+                .Append("), then run `bitbucket-mcp logout` and `bitbucket-mcp login` — widening a consumer ")
+                .Append("does not widen a grant that was already cached.")
+                .Append("\n  Atlassian API token: it needs ").Append(PipelineApiTokenScope)
+                .Append(". A token's scopes cannot be edited after it is created, so this means a new token ")
+                .Append("carrying that scope alongside the ones the pull-request tools use.")
+                .Append("\nlistCodeInsights needs no extra scope and often names the failing file and line ")
+                .Append("without one.");
+
+            return message.ToString();
+        }
+
         message.Append("\nEither the credential lacks a scope or the account lacks write access to ")
             .Append(Target(context))
             .Append(". Scopes do not imply one another, so read and write are both needed for what this call ")
             .Append("touches: OAuth consumer scopes ").Append(RequiredScopes)
             .Append("; Atlassian API token scopes ").Append(RequiredApiTokenScopes).Append('.')
-            .Append("\nAn API token must also be sent as Basic, via BITBUCKET_EMAIL + BITBUCKET_API_TOKEN — in ")
-            .Append("BITBUCKET_ACCESS_TOKEN it goes out as Bearer, which Bitbucket rejects.");
+            .Append("\nAn API token works either as Basic, via BITBUCKET_EMAIL + BITBUCKET_API_TOKEN, or as ")
+            .Append("Bearer via BITBUCKET_ACCESS_TOKEN — Bitbucket has accepted both since 2026-08. The ")
+            .Append("scopes are what matter here, not which header carried them.");
+
+        return message.ToString();
+    }
+
+    /// <summary>The message for an <see cref="HttpClient"/> request timeout.</summary>
+    private static string Timeout(ToolCallContext context)
+    {
+        var message = new StringBuilder("Bitbucket did not answer in time (the request timed out).");
+
+        message.Append("\nThis call was reading ").Append(Target(context)).Append('.');
+
+        if (context.Scope is ToolScope.Pipeline)
+        {
+            message.Append("\nA very large pipeline log can take longer than the client will wait. Ask for ")
+                .Append("less of it: a smaller maxLines, or pattern=\"...\" to search instead of streaming ")
+                .Append("the whole file.");
+        }
+        else
+        {
+            message.Append("\nAsk for less in one call — a smaller pageSize, or a diff of named paths rather ")
+                .Append("than a whole pull request — and try again.");
+        }
 
         return message.ToString();
     }
@@ -386,6 +476,13 @@ internal static class ToolErrors
     }
 
     /// <summary>Bitbucket's own words about the failure, when it supplied any.</summary>
+    /// <remarks>
+    /// The fallback to the raw body is load-bearing, not defensive. <c>ErrorEnvelopeDto.Error</c> is
+    /// an object, and several of Bitbucket's most useful errors put a bare string there instead —
+    /// <c>{"error": "API Token provided has no Bitbucket scopes."}</c> being the one a
+    /// misconfigured token actually hits. Parsing fails, the envelope comes back null, and without
+    /// this the single sentence that explains the failure is dropped in favour of generic advice.
+    /// </remarks>
     private static string? Detail(BitbucketApiException exception)
     {
         var error = exception.Error?.Error;
@@ -395,7 +492,36 @@ internal static class ToolErrors
             return Combine(error.Message.Trim(), error.Detail);
         }
 
-        return string.IsNullOrWhiteSpace(error?.Detail) ? null : error.Detail.Trim();
+        if (!string.IsNullOrWhiteSpace(error?.Detail))
+        {
+            return error.Detail.Trim();
+        }
+
+        return RawBodySnippet(exception.RawBody);
+    }
+
+    /// <summary>
+    /// A one-line rendering of a response body that did not parse as the documented envelope.
+    /// </summary>
+    /// <remarks>
+    /// Collapsed to a single line and capped, because the body may be an HTML error page from a
+    /// proxy rather than anything Bitbucket wrote, and a wall of markup helps nobody.
+    /// </remarks>
+    private static string? RawBodySnippet(string? rawBody)
+    {
+        if (string.IsNullOrWhiteSpace(rawBody))
+        {
+            return null;
+        }
+
+        var collapsed = string.Join(' ', rawBody.Split((char[]?) null, StringSplitOptions.RemoveEmptyEntries));
+
+        if (collapsed.Length == 0 || collapsed.StartsWith('<'))
+        {
+            return null;
+        }
+
+        return collapsed.Length <= MaxRawDetailLength ? collapsed : collapsed[..MaxRawDetailLength] + "...";
     }
 
     private static string Combine(string message, string? detail) =>

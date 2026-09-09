@@ -1,3 +1,68 @@
+# 1.2.0
+
+- Four Bitbucket Pipelines and build-diagnosis tools, taking the surface to twenty:
+  `listPipelines`, `getPipeline`, `getPipelineStepLog` and `listCodeInsights`. Until now the only
+  build signal was `listPullRequestStatuses`, which reports a state and a bitbucket.org URL that a
+  model cannot open — "why did the build fail?" was unanswerable through this server.
+- `getPipeline` returns a run *and* its steps in one call, with each step's `errorMessage` and the
+  `failedStepUuid` to read next. Bitbucket's own message ("the step timed out", "the image could
+  not be pulled") is frequently the entire diagnosis, so the tool puts it in front of the log
+  rather than behind it.
+- `getPipelineStepLog` reads the end of a step's log by default, because a step runs under `set -e`
+  and the last thing printed is the thing that broke. It asks for a byte range, so the log's full
+  size comes back in `Content-Range` and truncation is quantified rather than merely flagged; when
+  storage ignores the range it streams into a fixed ring instead, so memory is bounded by the
+  budget and never by the log. `pattern` searches the whole log for a literal substring — never a
+  regular expression, which from a model over a multi-megabyte file is a denial of service. ANSI
+  colour codes are stripped, and every cut is marked inside the text and reported by `truncated`.
+- The step-log endpoint is the first in this server that redirects **off** `api.bitbucket.org`: it
+  answers `307` to a presigned storage URL. D16's rule — re-attach the credential only for the API
+  host, follow anything else anonymously — turns out to be required rather than merely prudent,
+  because storage rejects a request that presents both a query signature and an `Authorization`
+  header. A test now covers that hop.
+- `listPipelines` accepts the state vocabulary its own results use (`SUCCESSFUL`, `FAILED`,
+  `RUNNING`, …) and translates to the different vocabulary Bitbucket's `status` filter wants
+  (`PASSED` for `SUCCESSFUL`, and so on). An unrecognised value is refused rather than sent:
+  Bitbucket answers an unknown `status` with `200` and an empty page, which reads exactly like "this
+  repository has never run a pipeline".
+- Following a pipelines cursor now re-applies the `fields=` list. Unlike the pull-request and commit
+  endpoints, `/pipelines` does not echo `fields=` into its own `next` link, so page two came back
+  untrimmed — measured at 2,615 bytes per run against 50, a 52x cost that landed in the model's
+  context and only after the first page.
+- `listCodeInsights` reads a commit's Code Insights reports and the file-and-line findings behind
+  the failing ones — the one build signal that points at the code rather than at a log. It needs no
+  scope the pull-request tools do not already hold, which also makes it the fallback when a pipeline
+  call is refused.
+- Reading pipelines needs a scope existing credentials do not have (`pipeline`, or
+  `read:pipeline:bitbucket` on an API token), so a 403 from a pipeline tool now says exactly that,
+  in both vocabularies, and names the `bitbucket-mcp logout` + `login` step — widening an OAuth
+  consumer does not widen a grant that was already cached. The pull-request 403 message is
+  unchanged.
+- `createPullRequest` and `updatePullRequest` can now express an **empty** reviewer list. `[]` was
+  previously folded into "unspecified", so a pull request could not be opened without the
+  repository's default reviewers and an existing reviewer list could not be cleared at all. Omitting
+  `reviewers` still lets Bitbucket apply its own rule; `[]` now sends `"reviewers": []`. The shipped
+  skill no longer reads as though fetching the default reviewers were a step in opening a pull
+  request.
+- `getPullRequest` and `listPullRequests` report `sourceCommit`. The field set had always requested
+  it and the wire model had always deserialised it — only the result records lacked the property, so
+  it was fetched and discarded. It is also the precise bridge from a pull request to its builds.
+- A Bitbucket error whose body is not the documented envelope is no longer swallowed. The scopeless
+  API token case answers `{"error": "API Token provided has no Bitbucket scopes."}` — a string where
+  an object is documented — so parsing failed and the one sentence explaining the failure was
+  dropped in favour of generic advice. The 401 message now names that case directly.
+- An `HttpClient` timeout is no longer reported as a cancellation. It arrives as a
+  `TaskCanceledException` with nobody's token cancelled, and was rethrown as "the caller cancelled",
+  which is both wrong and unactionable; it now says what timed out and what to ask for instead.
+- Bitbucket accepts an API token as `Bearer` as well as `Basic` (Atlassian shipped this on
+  2026-08-18). The README and one error message still said Bearer was rejected, which told users
+  they had made a mistake when they had not.
+- Dependencies: `ModelContextProtocol` 2.1.0 to 2.2.0, `Microsoft.Extensions.*` and
+  `System.Security.Cryptography.ProtectedData` 10.0.10 to 10.0.12, `Microsoft.NET.Test.Sdk` 18.8.1
+  to 18.10.0. `xunit.v3` deliberately stays at 3.2.2 — 4.0.0 drops the VSTest bridge D11 depends on
+  — and Fallout stays at 10.4.0, which is the stable channel and newer than the 11.0.x edge line
+  despite sorting lower.
+
 # 1.1.0
 
 - `updatePullRequest` takes `closeSourceBranch` and `draft`. Both fields existed on the request

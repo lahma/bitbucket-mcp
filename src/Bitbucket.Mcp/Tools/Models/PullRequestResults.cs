@@ -56,6 +56,12 @@ internal sealed record PullRequestSummary
     /// <summary>The branch being merged from.</summary>
     public string? SourceBranch { get; init; }
 
+    /// <summary>
+    /// The head commit of the source branch — the revision this pull request proposes. The bridge
+    /// to its builds: listPipelines takes it as <c>commit</c>, and so does listCodeInsights.
+    /// </summary>
+    public string? SourceCommit { get; init; }
+
     /// <summary>The branch being merged into.</summary>
     public string? DestinationBranch { get; init; }
 
@@ -121,6 +127,12 @@ internal sealed record PullRequestDetail
 
     /// <summary>The branch being merged from.</summary>
     public string? SourceBranch { get; init; }
+
+    /// <summary>
+    /// The head commit of the source branch — the revision this pull request proposes. The bridge
+    /// to its builds: listPipelines takes it as <c>commit</c>, and so does listCodeInsights.
+    /// </summary>
+    public string? SourceCommit { get; init; }
 
     /// <summary>The branch being merged into.</summary>
     public string? DestinationBranch { get; init; }

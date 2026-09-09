@@ -58,10 +58,13 @@ internal sealed class PullRequestWriteTools
         UseStructuredContent = true)]
     [Description(
         "Opens a new pull request. Only the title and the source branch are required; omitting " +
-        "destinationBranch targets the repository's main branch. Reviewers are Bitbucket account UUIDs in " +
-        "braced form ({...}) — read them from listDefaultReviewers or getPullRequest, never guess them from " +
-        "names. Calling this twice creates two pull requests, so check first with listPullRequests using " +
-        "sourceBranch and state=\"ALL\" to see whether that branch already has one.")]
+        "destinationBranch targets the repository's main branch. Do not add reviewers unless the user asked " +
+        "for them: leaving reviewers unset is the normal call, and passing an empty array opens the pull " +
+        "request with nobody on it even where the repository has a default-reviewer rule. When reviewers are " +
+        "wanted they are Bitbucket account UUIDs in braced form ({...}) — read them from listDefaultReviewers " +
+        "or getPullRequest, never guess them from names. Calling this twice creates two pull requests, so " +
+        "check first with listPullRequests using sourceBranch and state=\"ALL\" to see whether that branch " +
+        "already has one.")]
     public static async Task<PullRequestDetail> CreatePullRequestAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -77,7 +80,7 @@ internal sealed class PullRequestWriteTools
         string? destinationBranch = null,
         [Description("The pull request description, in Bitbucket-flavoured Markdown.")]
         string? description = null,
-        [Description("Reviewers to request, as Bitbucket account UUIDs in braced form ({...}). Read them from listDefaultReviewers, or from getPullRequest on an existing pull request. Display names, nicknames and emails are rejected.")]
+        [Description("Reviewers to request, as Bitbucket account UUIDs in braced form ({...}). Omit this to let Bitbucket apply the repository's own default-reviewer rule, or pass an empty array to open the pull request with NO reviewers even where such a rule exists. Read UUIDs from listDefaultReviewers, or from getPullRequest on an existing pull request; display names, nicknames and emails are rejected.")]
         string[]? reviewers = null,
         [Description("Delete the source branch when the pull request is merged. Omit to take Bitbucket's own default, which is not to. updatePullRequest can change it afterwards.")]
         bool? closeSourceBranch = null,
@@ -154,7 +157,7 @@ internal sealed class PullRequestWriteTools
         string? description = null,
         [Description("Retarget the pull request at a different branch, without any refs/heads/ prefix. Omit to keep the current destination.")]
         string? destinationBranch = null,
-        [Description("The complete new reviewer list, as Bitbucket account UUIDs in braced form ({...}). Read UUIDs from listDefaultReviewers or getPullRequest. This REPLACES the existing list; omit to leave the reviewers untouched.")]
+        [Description("The complete new reviewer list, as Bitbucket account UUIDs in braced form ({...}). Read UUIDs from listDefaultReviewers or getPullRequest. This REPLACES the existing list: omit it to leave the reviewers untouched, or pass an empty array to remove every reviewer.")]
         string[]? reviewers = null,
         [Description("Whether merging should delete the source branch. Omit to keep the current setting; a pull request opened without it can only be corrected here.")]
         bool? closeSourceBranch = null,
@@ -855,15 +858,23 @@ internal sealed class PullRequestWriteTools
 
     /// <summary>Turns the <c>reviewers</c> argument into UUID references, or nothing at all.</summary>
     /// <remarks>
-    /// <see langword="null"/> and an empty array are deliberately different on
-    /// <c>updatePullRequest</c>: null omits the field (reviewers unchanged), while an explicitly
-    /// empty array would clear the list. <see cref="ToolDefaults.CleanList"/> maps both an empty
-    /// array and an array of blanks to null, so clearing the list is not expressible — which is the
-    /// safer default for an argument a model fills in.
+    /// <para>
+    /// <see langword="null"/> and an empty array are deliberately <b>different</b>, and
+    /// <see cref="ToolDefaults.CleanListPreservingEmpty"/> is what keeps them apart. Omitting
+    /// <c>reviewers</c> leaves the field out of the body; passing <c>[]</c> sends
+    /// <c>"reviewers": []</c>.
+    /// </para>
+    /// <para>
+    /// On <c>createPullRequest</c> that empty array is the only way to open a pull request with
+    /// nobody on it when the repository or its project carries a default-reviewer rule — Bitbucket
+    /// fills an absent field, and cannot fill a present empty one. On <c>updatePullRequest</c> it is
+    /// the only way to clear an existing list. An array of nothing but blanks collapses to the same
+    /// empty list rather than to null, because a caller who typed an array meant an array.
+    /// </para>
     /// </remarks>
     private static List<AccountRefRequest>? Accounts(string[]? uuids)
     {
-        var cleaned = ToolDefaults.CleanList(uuids);
+        var cleaned = ToolDefaults.CleanListPreservingEmpty(uuids);
 
         if (cleaned is null)
         {

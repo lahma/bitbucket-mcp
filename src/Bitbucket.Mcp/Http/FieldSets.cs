@@ -152,6 +152,70 @@ internal static class FieldSets
     /// The same shape as <see cref="Tasks"/> without the <c>values.</c> prefix; the two describe one
     /// DTO and have to be kept in step.
     /// </remarks>
+    /// <summary>
+    /// <c>GET /pipelines</c> — fills <see cref="Models.PipelineDto"/>.
+    /// </summary>
+    /// <remarks>
+    /// The trimming here is worth more than on any other endpoint: an untrimmed pipeline is about
+    /// 2,600 bytes of repository, links, labels and creator avatars, against about 200 for the
+    /// fields anyone reads. Note that Bitbucket does <b>not</b> echo <c>fields=</c> into this
+    /// endpoint's <c>next</c> link, unlike the pull-request and commit endpoints — the client
+    /// re-applies it to a decoded cursor, or page two would arrive untrimmed.
+    /// </remarks>
+    internal const string Pipelines =
+        "next,size," +
+        "values.uuid,values.build_number,values.created_on,values.completed_on," +
+        "values.duration_in_seconds," +
+        "values.state.name,values.state.result.name,values.state.stage.name," +
+        "values.target.ref_type,values.target.ref_name,values.target.commit.hash," +
+        "values.target.selector.type,values.target.selector.pattern," +
+        "values.trigger.name," +
+        "values.creator.display_name,values.creator.uuid,values.creator.nickname";
+
+    /// <summary>
+    /// <c>GET /pipelines/{id}</c> — the same shape as <see cref="Pipelines"/> without the
+    /// <c>values.</c> prefix. The two describe one DTO and have to be kept in step.
+    /// </summary>
+    internal const string Pipeline =
+        "uuid,build_number,created_on,completed_on,duration_in_seconds," +
+        "state.name,state.result.name,state.stage.name," +
+        "target.ref_type,target.ref_name,target.commit.hash," +
+        "target.selector.type,target.selector.pattern," +
+        "trigger.name," +
+        "creator.display_name,creator.uuid,creator.nickname";
+
+    /// <summary>
+    /// <c>GET /pipelines/{id}/steps</c> — fills <see cref="Models.PipelineStepDto"/>.
+    /// </summary>
+    /// <remarks>
+    /// <c>values.setup_commands</c> and <c>values.script_commands</c> are omitted on purpose: the
+    /// setup list alone is around forty entries of git plumbing per step. <c>state.result.error</c>
+    /// is the opposite — it is frequently the entire answer to "why did this fail".
+    /// </remarks>
+    internal const string PipelineSteps =
+        "next,size," +
+        "values.uuid,values.name,values.started_on,values.completed_on," +
+        "values.duration_in_seconds,values.image.name," +
+        "values.state.name,values.state.stage.name," +
+        "values.state.result.name,values.state.result.error.key,values.state.result.error.message";
+
+    /// <summary>
+    /// <c>GET /commit/{sha}/reports</c> — fills <see cref="Models.CodeInsightsReportDto"/>.
+    /// </summary>
+    internal const string CodeInsightsReports =
+        "next,size," +
+        "values.uuid,values.external_id,values.title,values.details,values.reporter," +
+        "values.report_type,values.result,values.link,values.created_on";
+
+    /// <summary>
+    /// <c>GET /commit/{sha}/reports/{id}/annotations</c> — fills
+    /// <see cref="Models.CodeInsightsAnnotationDto"/>.
+    /// </summary>
+    internal const string CodeInsightsAnnotations =
+        "next,size," +
+        "values.uuid,values.path,values.line,values.summary,values.details," +
+        "values.annotation_type,values.result,values.severity,values.link";
+
     internal const string Task =
         "id,state,created_on,updated_on," +
         "content.raw," +

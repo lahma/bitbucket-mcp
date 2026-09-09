@@ -52,7 +52,7 @@ partial class Build : FalloutBuild,
 
     /// <summary>
     /// The tool names <c>tools/list</c> must return, verbatim and complete. Grouped read-then-write
-    /// to match the two tool classes; the comparison sorts both sides, so the order here is only
+    /// to match the three tool classes; the comparison sorts both sides, so the order here is only
     /// for readers.
     /// </summary>
     static readonly string[] ExpectedToolNames =
@@ -76,6 +76,12 @@ partial class Build : FalloutBuild,
         "setPullRequestReviewStatus",
         "mergePullRequest",
         "declinePullRequest",
+
+        // PipelineReadTools
+        "listPipelines",
+        "getPipeline",
+        "getPipelineStepLog",
+        "listCodeInsights",
     ];
 
     /// <summary>How long SmokeTest waits for both JSON-RPC responses before giving up.</summary>
