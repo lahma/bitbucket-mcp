@@ -208,7 +208,12 @@ internal static class ToolErrors
             .Append("launches this server with, then restarting it:")
             .Append("\n  BITBUCKET_ACCESS_TOKEN — a workspace or repository access token (sent as Bearer)")
             .Append("\n  BITBUCKET_EMAIL + BITBUCKET_API_TOKEN — an Atlassian account email and API token")
-            .Append("\n(Bitbucket app passwords were removed on 2026-07-28 and are not an option.)");
+            .Append("\n(Bitbucket app passwords were removed on 2026-07-28 and are not an option.)")
+            .Append("\n\nAlready had one of those set? If this server was installed as a Claude Code ")
+            .Append("plugin, check the plugin version: before 1.2.1 its manifest wrote every prompt into ")
+            .Append("this server's environment even when the prompt was left blank, which blanked the ")
+            .Append("variable you had. `bitbucket-mcp status` names the variable each credential actually ")
+            .Append("came from.");
 
         return message.ToString();
     }

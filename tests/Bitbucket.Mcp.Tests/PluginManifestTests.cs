@@ -1,5 +1,7 @@
 using System.Text.Json;
 
+using Bitbucket.Mcp.Configuration;
+
 using Xunit;
 
 namespace Bitbucket.Mcp.Tests;
@@ -169,13 +171,30 @@ public class PluginManifestTests
             .EnumerateObject()
             .ToDictionary(entry => entry.Name, entry => entry.Value.GetString()!, StringComparer.Ordinal);
 
+        // The manifest writes to the plugin-option names, never to the plain ones. That is the fix
+        // for issue #4 and the entire reason the indirection exists: an option the user never filled
+        // in substitutes as the empty string rather than being omitted, so mapping it straight onto
+        // BITBUCKET_ACCESS_TOKEN would set that variable to "" in the child process and shadow a
+        // value the user already had. With three auth mechanisms in a precedence chain, that does
+        // not fail loudly — it silently demotes the caller to the next mechanism down.
         Assert.Equal(
-            documented.Keys.OrderBy(name => name, StringComparer.Ordinal),
+            documented.Keys
+                .Select(name => BitbucketMcpOptions.PluginOptionPrefix + name)
+                .OrderBy(name => name, StringComparer.Ordinal),
             passed.Keys.OrderBy(name => name, StringComparer.Ordinal));
+
+        foreach (var name in documented.Keys)
+        {
+            Assert.False(
+                passed.ContainsKey(name),
+                $"The manifest maps {name} directly. An unset option substitutes as the empty string, "
+                + $"which would shadow a {name} the user already has in their environment (issue #4). "
+                + $"Map it to {BitbucketMcpOptions.PluginOptionPrefix}{name} instead.");
+        }
 
         foreach (var (name, isSecret) in documented)
         {
-            var placeholder = passed[name];
+            var placeholder = passed[BitbucketMcpOptions.PluginOptionPrefix + name];
 
             Assert.True(
                 placeholder.StartsWith("${user_config.", StringComparison.Ordinal)

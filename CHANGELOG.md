@@ -1,3 +1,31 @@
+# 1.2.1
+
+- The plugin manifest no longer blanks an ambient `BITBUCKET_*` credential
+  ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). It mapped all six credential variables
+  onto their own names through `${user_config.X}` placeholders, and an option the user never filled
+  in substitutes as the **empty string** rather than being omitted — so installing the plugin wrote
+  `BITBUCKET_ACCESS_TOKEN=""` into the server's environment and shadowed a value the user already
+  had. With three auth mechanisms in a precedence chain the failure was quiet rather than loud: it
+  did not say "no credential", it demoted the caller to the next mechanism down, or off the end of the
+  chain into a browser sign-in nobody asked for.
+- The manifest now writes to `CLAUDE_PLUGIN_OPTION_*` — Claude Code's own convention for these
+  values — and `BitbucketMcpOptions` reads the prefixed name first, treating blank as absent, then
+  falls back to the plain one. A filled-in prompt still wins; a blank one changes nothing.
+- `${user_config.KEY:-fallback}` is deliberately *not* the fix. The substituter's capture group is
+  `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, comes back undefined,
+  and throws — the plugin then fails to load outright. The shell-style `${VAR:-default}` form is
+  supported, but by a different expander that runs over the ambient environment rather than over
+  plugin options.
+- `bitbucket-mcp status` and the credential's own description now name the variable that actually
+  supplied the credential, rather than the one it is usually called. Two variables can supply each
+  one, and which of them won is the difference between "my token is being ignored" and "my token is
+  wrong". No part of any value is printed.
+- The sign-in error names the plugin case directly, because the advice it already gave — set
+  `BITBUCKET_ACCESS_TOKEN` in the environment the client launches the server with — was the exact
+  thing the manifest then overwrote.
+- `PluginManifestTests` fails if the manifest is ever mapped back to the plain names. Reverting the
+  manifest is otherwise an easy and completely invisible regression.
+
 # 1.2.0
 
 - Four Bitbucket Pipelines and build-diagnosis tools, taking the surface to twenty:

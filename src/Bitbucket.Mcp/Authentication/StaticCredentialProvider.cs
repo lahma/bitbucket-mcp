@@ -41,29 +41,46 @@ internal sealed class StaticCredentialProvider : ICredentialProvider
     }
 
     /// <summary>A workspace, repository or project access token, sent as <c>Bearer</c>.</summary>
-    internal static StaticCredentialProvider ForBearerToken(string accessToken)
+    /// <param name="accessToken">The token itself.</param>
+    /// <param name="variable">
+    /// The variable it was read from, named in <see cref="Describe"/>. Two can supply it — the
+    /// plain name and its <c>CLAUDE_PLUGIN_OPTION_</c> twin — and saying which one won is what
+    /// separates "my token is being ignored" from "my token is wrong".
+    /// </param>
+    internal static StaticCredentialProvider ForBearerToken(string accessToken, string variable)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(variable);
 
         return new StaticCredentialProvider(
             new AuthenticationHeaderValue("Bearer", accessToken),
-            "Bearer access token from BITBUCKET_ACCESS_TOKEN");
+            $"Bearer access token from {variable}");
     }
 
     /// <summary>
     /// An Atlassian API token paired with the account email, sent as
     /// <c>Basic base64(email:token)</c>.
     /// </summary>
-    internal static StaticCredentialProvider ForApiToken(string email, string apiToken)
+    /// <param name="email">The Atlassian account email.</param>
+    /// <param name="apiToken">The API token.</param>
+    /// <param name="emailVariable">The variable the email was read from.</param>
+    /// <param name="apiTokenVariable">The variable the token was read from.</param>
+    internal static StaticCredentialProvider ForApiToken(
+        string email,
+        string apiToken,
+        string emailVariable,
+        string apiTokenVariable)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
         ArgumentException.ThrowIfNullOrWhiteSpace(apiToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(emailVariable);
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiTokenVariable);
 
         var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{email}:{apiToken}"));
 
         return new StaticCredentialProvider(
             new AuthenticationHeaderValue("Basic", credentials),
-            $"Basic API token for {email} (BITBUCKET_EMAIL + BITBUCKET_API_TOKEN)");
+            $"Basic API token for {email} ({emailVariable} + {apiTokenVariable})");
     }
 
     /// <inheritdoc />
