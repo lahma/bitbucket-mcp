@@ -67,8 +67,11 @@ internal static class StatusCommand
 
         var configured = !string.IsNullOrEmpty(options.OAuthKey) && !string.IsNullOrEmpty(options.OAuthSecret);
 
+        // Naming the variable the value actually came from, not the one it is usually called: a
+        // Claude Code plugin answers arrive under CLAUDE_PLUGIN_OPTION_* and win over the plain
+        // names, and seeing which won is the point of this line.
         return configured
-            ? "OAuth 2.0 browser flow (BITBUCKET_OAUTH_KEY + BITBUCKET_OAUTH_SECRET)"
+            ? $"OAuth 2.0 browser flow ({options.OAuthKeyVariable ?? "BITBUCKET_OAUTH_KEY"} + BITBUCKET_OAUTH_SECRET)"
             : "none - set BITBUCKET_ACCESS_TOKEN, or BITBUCKET_EMAIL + BITBUCKET_API_TOKEN, or BITBUCKET_OAUTH_KEY + BITBUCKET_OAUTH_SECRET";
     }
 

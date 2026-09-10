@@ -77,7 +77,7 @@ named `bitbucket-mcp-{version}-{rid}` and contains the executable, `LICENSE` and
 | macOS Apple silicon | `osx-arm64` | `bitbucket-mcp-{version}-osx-arm64.tar.gz` |
 
 ```bash
-tar -xzf bitbucket-mcp-1.2.0-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.2.1-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -101,7 +101,7 @@ The same server is published to nuget.org as
 there is nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.2.0 --yes status
+dnx bitbucket-mcp@1.2.1 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -114,7 +114,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.2.0", "--yes"],
+      "args": ["bitbucket-mcp@1.2.1", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -124,7 +124,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.2.0`) rather than floating: an MCP server is something an agent runs on your
+Pin the version (`@1.2.1`) rather than floating: an MCP server is something an agent runs on your
 behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
 needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
 missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
@@ -561,6 +561,11 @@ claude plugin marketplace add lahma/bitbucket-mcp
 claude plugin install bitbucket-mcp@bitbucket-mcp
 ```
 
+Every prompt is optional, and leaving one blank now genuinely means "not set": the manifest passes
+answers under `CLAUDE_PLUGIN_OPTION_*` names and the server reads those in preference to the plain
+`BITBUCKET_*` ones, so a blank prompt falls through to whatever your environment already had. (Before
+1.2.1 a blank prompt overwrote it — see *[Troubleshooting](#troubleshooting)*.)
+
 Enabling it asks for your credentials in a dialog — Atlassian e-mail plus API token is the shortest
 way in, or the OAuth consumer key and secret for the browser flow, plus an optional default
 workspace. Every field is optional and each maps to the environment variable of the same name in
@@ -606,6 +611,14 @@ the plugin's skill path still resolves, that its version is the one in `CHANGELO
 
 Start with `bitbucket-mcp status`: it prints which credential would win, the exact callback URL
 the server will use, the token cache path and what is in it — and none of the values.
+
+**The plugin ignores a `BITBUCKET_*` variable you already had set.** Fixed in **1.2.1**; upgrade
+with `/plugin update`. Before that, the manifest wrote all six credential prompts into the server's
+environment even when they were left blank, and a blank prompt arrives as an empty string rather
+than being omitted — so it overwrote the variable you had. Because the three auth mechanisms form a
+precedence chain, this did not fail loudly: it demoted you to the next mechanism, or to a browser
+sign-in you never asked for. `bitbucket-mcp status` now names the variable each credential actually
+came from, which is how you tell "my token is being ignored" from "my token is wrong".
 
 **401 with "API Token provided has no Bitbucket scopes."** The token is valid; it simply has no
 Bitbucket permission attached, which is what the plain *Create API token* button produces. Signing

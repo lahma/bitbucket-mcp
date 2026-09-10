@@ -61,7 +61,9 @@ internal static class CredentialProviderFactory
 
         if (!string.IsNullOrEmpty(options.AccessToken))
         {
-            return StaticCredentialProvider.ForBearerToken(options.AccessToken);
+            return StaticCredentialProvider.ForBearerToken(
+                options.AccessToken,
+                options.AccessTokenVariable ?? "BITBUCKET_ACCESS_TOKEN");
         }
 
         // Both halves or neither: an email without a token cannot authenticate anything, and
@@ -69,7 +71,11 @@ internal static class CredentialProviderFactory
         // header that always 401s.
         if (!string.IsNullOrEmpty(options.Email) && !string.IsNullOrEmpty(options.ApiToken))
         {
-            return StaticCredentialProvider.ForApiToken(options.Email, options.ApiToken);
+            return StaticCredentialProvider.ForApiToken(
+                options.Email,
+                options.ApiToken,
+                options.EmailVariable ?? "BITBUCKET_EMAIL",
+                options.ApiTokenVariable ?? "BITBUCKET_API_TOKEN");
         }
 
         return null;

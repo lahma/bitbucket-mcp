@@ -46,11 +46,60 @@ internal sealed record BitbucketMcpOptions
     /// <summary>Default minimum log level.</summary>
     internal const LogLevel DefaultLogLevel = LogLevel.Information;
 
+    /// <summary>
+    /// The prefix the Claude Code plugin launcher's answers arrive under.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plugin manifest maps each declared option into the server's environment through a
+    /// <c>${user_config.KEY}</c> placeholder, and an option the user never filled in substitutes as
+    /// the <b>empty string</b> rather than being omitted. Mapping such an option straight onto
+    /// <c>BITBUCKET_ACCESS_TOKEN</c> therefore sets that variable to <c>""</c> in the child
+    /// process, <em>shadowing</em> a perfectly good value the user already had in their
+    /// environment.
+    /// </para>
+    /// <para>
+    /// That is worse here than in a server with a single credential, because these three mechanisms
+    /// form a precedence chain: blanking the top of it does not fail, it silently <em>demotes</em>
+    /// the caller to the next one down — or off the end of it into a browser sign-in nobody asked
+    /// for. The symptom is never "no credential"; it is authenticating as something other than what
+    /// was configured.
+    /// </para>
+    /// <para>
+    /// So the manifest writes to <c>CLAUDE_PLUGIN_OPTION_*</c> instead, and those are read
+    /// <b>first, in preference to</b> the plain names, with blank treated as absent. A user who
+    /// fills the prompt in gets their value; a user who leaves it blank keeps the environment they
+    /// already had. Nobody sets these by hand — they are the plugin launcher's half of the
+    /// contract, and the prefix is Claude Code's own convention for the same values.
+    /// </para>
+    /// <para>
+    /// Note that <c>${user_config.KEY:-fallback}</c> is <b>not</b> a fix: the substituter's capture
+    /// group is <c>[^}]+</c>, so the whole <c>key:-fallback</c> string is looked up as an option
+    /// name, comes back undefined, and throws — the plugin then fails to load outright.
+    /// </para>
+    /// </remarks>
+    internal const string PluginOptionPrefix = "CLAUDE_PLUGIN_OPTION_";
+
     /// <summary><c>BITBUCKET_ACCESS_TOKEN</c> — bearer token; highest precedence, bypasses OAuth.</summary>
     internal string? AccessToken { get; init; }
 
+    /// <summary>
+    /// Which variable supplied <see cref="AccessToken"/>, or <see langword="null"/> when there is
+    /// none. Reported by <c>status</c> and named in the credential's own description; never any
+    /// part of the value.
+    /// </summary>
+    /// <remarks>
+    /// Two variables can supply each credential — the plain name and its
+    /// <see cref="PluginOptionPrefix"/> twin — and which one won is the difference between "my
+    /// token is being ignored" and "my token is wrong".
+    /// </remarks>
+    internal string? AccessTokenVariable { get; init; }
+
     /// <summary><c>BITBUCKET_EMAIL</c> — Atlassian account email, paired with <see cref="ApiToken"/>.</summary>
     internal string? Email { get; init; }
+
+    /// <inheritdoc cref="AccessTokenVariable"/>
+    internal string? EmailVariable { get; init; }
 
     /// <summary>
     /// <c>BITBUCKET_API_TOKEN</c> — Atlassian API token; with <see cref="Email"/> forms
@@ -58,6 +107,12 @@ internal sealed record BitbucketMcpOptions
     /// 2026-07-28 — and are never implemented here.)
     /// </summary>
     internal string? ApiToken { get; init; }
+
+    /// <inheritdoc cref="AccessTokenVariable"/>
+    internal string? ApiTokenVariable { get; init; }
+
+    /// <inheritdoc cref="AccessTokenVariable"/>
+    internal string? OAuthKeyVariable { get; init; }
 
     /// <summary><c>BITBUCKET_OAUTH_KEY</c> — OAuth consumer key (browser flow).</summary>
     internal string? OAuthKey { get; init; }
@@ -132,16 +187,27 @@ internal sealed record BitbucketMcpOptions
     {
         ArgumentNullException.ThrowIfNull(read);
 
+        // The six the plugin manifest maps are read through the plugin-option layer; everything
+        // below is not declared as an option, so it can only come from the environment.
+        var accessToken = ReadConfigured(read, "BITBUCKET_ACCESS_TOKEN");
+        var email = ReadConfigured(read, "BITBUCKET_EMAIL");
+        var apiToken = ReadConfigured(read, "BITBUCKET_API_TOKEN");
+        var oauthKey = ReadConfigured(read, "BITBUCKET_OAUTH_KEY");
+
         return new BitbucketMcpOptions
         {
-            AccessToken = ReadString(read, "BITBUCKET_ACCESS_TOKEN"),
-            Email = ReadString(read, "BITBUCKET_EMAIL"),
-            ApiToken = ReadString(read, "BITBUCKET_API_TOKEN"),
-            OAuthKey = ReadString(read, "BITBUCKET_OAUTH_KEY"),
-            OAuthSecret = ReadString(read, "BITBUCKET_OAUTH_SECRET"),
+            AccessToken = accessToken.Value,
+            AccessTokenVariable = accessToken.Source,
+            Email = email.Value,
+            EmailVariable = email.Source,
+            ApiToken = apiToken.Value,
+            ApiTokenVariable = apiToken.Source,
+            OAuthKey = oauthKey.Value,
+            OAuthKeyVariable = oauthKey.Source,
+            OAuthSecret = ReadConfigured(read, "BITBUCKET_OAUTH_SECRET").Value,
             OAuthCallbackPort = ReadInt32(read, "BITBUCKET_OAUTH_CALLBACK_PORT", DefaultOAuthCallbackPort, 1, 65535),
             OAuthCallbackHost = ReadString(read, "BITBUCKET_OAUTH_CALLBACK_HOST") ?? DefaultOAuthCallbackHost,
-            DefaultWorkspace = ReadString(read, "BITBUCKET_DEFAULT_WORKSPACE"),
+            DefaultWorkspace = ReadConfigured(read, "BITBUCKET_DEFAULT_WORKSPACE").Value,
             TokenFilePath = ReadString(read, "BITBUCKET_MCP_TOKEN_FILE"),
             NoBrowser = ReadBoolean(read, "BITBUCKET_MCP_NO_BROWSER", defaultValue: false),
             AuthTimeoutSeconds = ReadInt32(read, "BITBUCKET_MCP_AUTH_TIMEOUT_SECONDS", DefaultAuthTimeoutSeconds, 1, 3600),
@@ -151,6 +217,28 @@ internal sealed record BitbucketMcpOptions
             MaxLogLines = ReadInt32(read, "BITBUCKET_MCP_MAX_LOG_LINES", DefaultMaxLogLines, 1, 5_000),
             MaxLogBytes = ReadInt32(read, "BITBUCKET_MCP_MAX_LOG_BYTES", DefaultMaxLogBytes, 4_096, 8 * 1024 * 1024),
         };
+    }
+
+    /// <summary>
+    /// Reads a variable the Claude Code plugin manifest also writes, preferring the plugin's answer
+    /// and falling back to the plain name when the plugin left it blank.
+    /// </summary>
+    /// <remarks>
+    /// Blank means <em>absent</em> here, not "configured as empty" — see
+    /// <see cref="PluginOptionPrefix"/> for why that distinction is the whole point of this
+    /// indirection.
+    /// </remarks>
+    /// <param name="read">The environment reader.</param>
+    /// <param name="name">The plain variable name, which is also the option's suffix.</param>
+    /// <returns>The value and the name of the variable it came from, both null when unset.</returns>
+    private static (string? Value, string? Source) ReadConfigured(Func<string, string?> read, string name)
+    {
+        if (ReadString(read, PluginOptionPrefix + name) is { } fromPlugin)
+        {
+            return (fromPlugin, PluginOptionPrefix + name);
+        }
+
+        return ReadString(read, name) is { } plain ? (plain, name) : (null, null);
     }
 
     /// <summary>Trims and normalises an unset or all-whitespace variable to <see langword="null"/>.</summary>

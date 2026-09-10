@@ -37,7 +37,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D21)
+## Design decisions (D1–D22)
 
 | # | Decision |
 |---|---|
@@ -61,7 +61,8 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D18 | **A state-only `updatePullRequest` retries once with the pull request's own title.** Bitbucket documents `PUT /pullrequests/{id}` as a partial update but publishes no example without a `title`, and answers `400` to some bodies that name none. `SendUpdateAsync` catches exactly that combination — a 400 on a body with no title — fetches the pull request and resends with its existing title. `UpdateTaskAsync` does the same for a state-only task update. The cost is a last-write-wins window between the read and the resend, accepted because the alternative is a call that simply fails. |
 | D19 | **Pipeline logs are read tail-first, over a byte `Range`, and reduced while streaming.** A step runs under `set -e`, so the failure is the last thing printed; the tool asks for a suffix range and gets the log's full size back in `Content-Range` for free, which is what makes truncation quantified rather than merely flagged. Storage that ignores the header is handled by streaming into a fixed byte ring instead, so memory is bounded by the budget and never by the log; a `416` retries once unranged onto that same path. `HEAD` is never used — the presigned URL is signed for `GET` and answers 403. `pattern` is a literal substring, never a regular expression: the argument comes from a model, and backtracking over a multi-megabyte log is a denial of service against the server that fetched it. Verified against live storage 2026-09-09, including that ranged responses are not compressed. |
 | D20 | **The pipeline surface is read-only, and 403s are scope-aware per tool.** Running or stopping a pipeline needs `pipeline:write` on top of the read scope and spends build minutes; the problem being solved is diagnosis. Reading pipelines needs `pipeline` / `read:pipeline:bitbucket`, which **no existing user's credential has**, so `ToolCallContext` carries a `ToolScope` and `ToolErrors.Forbidden` branches on it: the pipeline message names that scope in both vocabularies, names the `logout`/`login` step (widening a consumer does not widen a cached grant), and offers `listCodeInsights` as a fallback. The pull-request branch is byte-identical to what it was, so nobody else's 403 grew a line. |
-| D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. |
+| D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. | |
+| D22 | **The plugin manifest writes to `CLAUDE_PLUGIN_OPTION_*`, never to the plain variable names.** A Claude Code manifest maps every declared option into the server's environment through a `${user_config.X}` placeholder, and an option the user never filled in substitutes as the **empty string** rather than being omitted — so mapping it onto `BITBUCKET_ACCESS_TOKEN` set that variable to `""` in the child process and shadowed a value the user already had ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). With three auth mechanisms in a precedence chain the failure was silent: it demoted the caller to the next mechanism, or off the end of the chain into a browser sign-in nobody asked for. `BitbucketMcpOptions.ReadConfigured` therefore reads the prefixed name first, blank treated as absent, falling back to the plain one; a filled prompt still wins and a blank one changes nothing. `${user_config.KEY:-fallback}` is **not** an alternative — the substituter's capture group is `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, is undefined, and throws, and the plugin fails to load. `PluginManifestTests` fails if the manifest is ever mapped back.
 
 ### Risks carried (R3–R5)
 
@@ -403,6 +404,11 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   be added, after the *Tool table*, `ToolInventoryTests` and `Build.cs`. The frontmatter is checked
   too: `name` must equal the directory name and satisfy the Agent Skills spec's charset, and
   `description` must be present and within 1024 characters.
+- **The plugin manifest never maps a credential onto its plain variable name** (D22).
+  `PluginManifestTests` asserts that every `env` key carries the `CLAUDE_PLUGIN_OPTION_` prefix and
+  that no plain `BITBUCKET_*` name appears as one. Reverting that mapping is a one-word edit whose
+  entire effect is invisible — the plugin still installs, still starts, and silently authenticates
+  as something other than what the user configured.
 - **The plugin manifests still describe a working install.** `PluginManifestTests` asserts that the
   marketplace lists this repository as its one plugin with `source: "./"`, that the declared skill
   path still has a `SKILL.md` behind it (a moved skill would otherwise ship a plugin with no skill),
