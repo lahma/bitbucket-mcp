@@ -1238,23 +1238,6 @@ public class BitbucketApiClientTests
         Assert.That(request.Body, Is.Null.Or.Empty);
     }
 
-    /// <summary>
-    /// Deleted comments stay in Bitbucket's list, blanked. Filtering them in the query keeps a page
-    /// from coming back short — or empty, with a next page still set — after they are dropped.
-    /// </summary>
-    [Test]
-    public async Task CommentsAreListedWithoutTheDeletedOnes()
-    {
-        using var stub = new StubHttpMessageHandler();
-        stub.EnqueueJson(HttpFixtures.Read("http-comments-page.json"));
-
-        using var client = CreateClient(stub);
-
-        _ = await client.GetCommentsAsync(Workspace, Repository, 412, cancellationToken: TestContext.CurrentContext.CancellationToken);
-
-        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.EqualTo("deleted = false"));
-    }
-
     [TestCase("{11111111-2222-3333-4444-555555555555}", "reviewers.uuid = \"{11111111-2222-3333-4444-555555555555}\"")]
     [TestCase("ada", "reviewers.nickname = \"ada\"")]
     public async Task ReviewerAndDestinationBranchBecomeBbqlClauses(string reviewer, string reviewerClause)

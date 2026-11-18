@@ -289,7 +289,7 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 
 > Done, with the deviations that having no Bitbucket credentials on the build machine forced:
 > - Step 13's fixture is synthetic, shaped after the OpenAPI schema, and the live capture is still owed (see *How it is verified*).
-> - Step 15 filters `unresolvedOnly` client-side: a BBQL `resolution` filter could not be tried. `deleted = false` is server-side, still behind the mapper's backstop, and on the live-check list.
+> - Step 15 filters `unresolvedOnly` client-side: a BBQL `resolution` filter could not be tried. The server-side `deleted = false` was built and then taken out before release: no documentation supports it, an Atlassian Community report says the comments endpoint does not honour it, and it could not be tried live. Deleted comments stay filtered client-side, as in 1.2.1.
 > - **Step 17 is dropped from 1.3.0.** The test-report endpoints document no response body and none could be captured.
 > - `listPipelines`' `targetBranch` errors used to name `sourceBranch` and "pull requests"; the shared branch filter now takes the parameter's name.
 > - `mergePullRequest` disposes the 202 before polling, so the unread response does not hold a connection for the wait.

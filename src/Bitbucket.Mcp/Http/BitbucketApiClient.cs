@@ -296,10 +296,15 @@ internal sealed class BitbucketApiClient : IDisposable
     }
 
     /// <summary>
-    /// Lists a pull request's comments, general and inline. Deleted comments — which Bitbucket keeps
-    /// in the list, blanked, so that a thread keeps its shape — are filtered out by the query, so a
-    /// page is not short of what it claims; the caller drops any that still arrive.
+    /// Lists a pull request's comments, general and inline, including deleted ones — Bitbucket
+    /// returns those with blanked content to keep threads intact, and the caller filters them.
     /// </summary>
+    /// <remarks>
+    /// Not with <c>q=deleted=false</c>, which would keep a page from coming back short: the comments
+    /// endpoint documents no query filter for it, and an Atlassian Community report says it does not
+    /// work. Sending it unverified risks failing every comment read; verify it against a live
+    /// workspace before adding it.
+    /// </remarks>
     /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
     internal async Task<Page<CommentDto>> GetCommentsAsync(
         string workspace,
@@ -314,7 +319,6 @@ internal sealed class BitbucketApiClient : IDisposable
             : PullRequest(workspace, repositorySlug, pullRequestId)
                 .Segment("comments")
                 .Query("fields", FieldSets.Comments)
-                .Query("q", "deleted = false")
                 .Query("pagelen", ClampPageSize(pageSize))
                 .Build();
 

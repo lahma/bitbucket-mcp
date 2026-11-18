@@ -16,10 +16,8 @@
 - `updatePullRequestComment` (new) edits one of your own comments, or deletes it with
   `delete=true` — for the comment that was wrong, posted twice or put on the wrong line, which until
   now could only be followed by a second comment. It is marked destructive: the old text is gone.
-- `getPullRequestComments` filters deleted comments in the query rather than only after fetching,
-  so a page is no longer silently short of its `pageSize` — or empty, with a next page still set.
-  `unresolvedOnly=true` leaves out the threads already resolved, replies included: the review
-  comments still waiting for an answer, in one call.
+- `getPullRequestComments` takes `unresolvedOnly=true`, which leaves out the threads already
+  resolved, replies included: the review comments still waiting for an answer, in one call.
 - `listPullRequests` takes `reviewer` ("what is waiting on my review?") and `destinationBranch`
   ("what goes into `main`?").
 - `listPipelines`' `targetBranch` errors named the wrong argument (`sourceBranch`) and spoke of
