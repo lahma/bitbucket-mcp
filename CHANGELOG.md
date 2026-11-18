@@ -1,3 +1,16 @@
+# 1.3.1
+
+- A tool call that names an argument the tool does not take is refused, saying which, instead of
+  the argument being dropped. The MCP SDK binds arguments by exact name: a mis-cased required one
+  (`Repository`) failed with nothing but "An error occurred invoking 'getPullRequest'.", and a
+  mis-cased optional one was ignored without a word — `Workspace` for `workspace` quietly ran the
+  call against `BITBUCKET_DEFAULT_WORKSPACE` instead, which for a write tool is a change made in the
+  wrong place. The refusal names each unknown argument and, when only the case is wrong, the
+  spelling meant, and nothing is sent to Bitbucket.
+- For contributors: `claude plugin validate . --strict` passes again. The repository root is also
+  the Claude Code plugin's root, where a `CLAUDE.md` is flagged, so the file that imports AGENTS.md
+  for Claude Code moved to `.claude/CLAUDE.md`.
+
 # 1.3.0
 
 - `mergePullRequest` follows a merge Bitbucket turns into a task instead of reporting it as an

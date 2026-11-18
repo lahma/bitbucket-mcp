@@ -99,12 +99,7 @@ internal static class McpServerSetup
                 serverOptions.ServerInstructions = ServerInstructions.Text;
             })
             .WithStdioServerTransport()
-            // One WithTools<T>(jsonOptions) per tool class - never WithToolsFromAssembly (IL2026).
-            // These also populate the tool collection, which is what makes the server advertise the
-            // `tools` capability and answer `tools/list`.
-            .WithTools<PullRequestReadTools>(jsonOptions)
-            .WithTools<PullRequestWriteTools>(jsonOptions)
-            .WithTools<PipelineReadTools>(jsonOptions);
+            .WithBitbucketTools(jsonOptions);
 
         await using var provider = services.BuildServiceProvider();
 
@@ -127,6 +122,46 @@ internal static class McpServerSetup
 
         return Cli.CliDispatcher.ExitSuccess;
     }
+
+    /// <summary>
+    /// Registers the tool surface and the guard in front of it: what every transport serves.
+    /// </summary>
+    /// <remarks>
+    /// One <c>WithTools&lt;T&gt;(jsonOptions)</c> per tool class — never <c>WithToolsFromAssembly</c>
+    /// (IL2026). These also populate the tool collection, which is what makes the server advertise
+    /// the <c>tools</c> capability and answer <c>tools/list</c>. Factored out of
+    /// <see cref="RunStdioAsync"/> so that a test can serve exactly this over an in-memory transport.
+    /// </remarks>
+    internal static IMcpServerBuilder WithBitbucketTools(this IMcpServerBuilder builder, JsonSerializerOptions jsonOptions) =>
+        builder
+            .WithTools<PullRequestReadTools>(jsonOptions)
+            .WithTools<PullRequestWriteTools>(jsonOptions)
+            .WithTools<PipelineReadTools>(jsonOptions)
+            .WithRequestFilters(static filters => filters.AddCallToolFilter(RefuseUnknownArguments));
+
+    /// <summary>
+    /// Answers a call that names an argument its tool does not take with a tool error saying which,
+    /// instead of letting the SDK drop it (see <see cref="ToolArguments"/>). A tool error rather than
+    /// a protocol error, because it is the model that has to correct the call.
+    /// </summary>
+    private static McpRequestHandler<CallToolRequestParams, CallToolResult> RefuseUnknownArguments(
+        McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
+        (context, cancellationToken) =>
+        {
+            if (context.Params is { } call &&
+                context.Server.ServerOptions.ToolCollection is { } toolCollection &&
+                toolCollection.TryGetPrimitive(call.Name, out var tool) &&
+                ToolArguments.Refuse(tool.ProtocolTool, call.Arguments?.Keys) is { } refusal)
+            {
+                return ValueTask.FromResult(new CallToolResult
+                {
+                    IsError = true,
+                    Content = [new TextContentBlock { Text = refusal }],
+                });
+            }
+
+            return next(context, cancellationToken);
+        };
 
     /// <summary>
     /// Builds the tool-facing serializer options that every <c>WithTools&lt;T&gt;</c> registration —
