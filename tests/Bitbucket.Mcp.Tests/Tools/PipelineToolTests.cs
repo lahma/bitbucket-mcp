@@ -5,7 +5,6 @@ using Bitbucket.Mcp.Tools;
 
 using ModelContextProtocol;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Tools;
 
@@ -23,7 +22,7 @@ public sealed class PipelineToolTests
     private const string Workspace = "acme";
     private const string Repository = "widgets";
 
-    [Fact]
+    [Test]
     public async Task ListingPipelinesFlattensEveryStateShape()
     {
         using var handler = new StubHttpMessageHandler();
@@ -36,24 +35,24 @@ public sealed class PipelineToolTests
             ToolTestHost.CreateOptions(),
             Repository,
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(3, result.Pipelines.Count);
+        Assert.That(result.Pipelines.Count, Is.EqualTo(3));
 
         // {name: COMPLETED, result: {name: FAILED}} -> FAILED
-        Assert.Equal("FAILED", result.Pipelines[0].State);
-        Assert.True(result.Pipelines[0].Completed);
+        Assert.That(result.Pipelines[0].State, Is.EqualTo("FAILED"));
+        Assert.That(result.Pipelines[0].Completed, Is.True);
 
         // {name: IN_PROGRESS, stage: {name: RUNNING}} -> RUNNING, and not finished
-        Assert.Equal("RUNNING", result.Pipelines[1].State);
-        Assert.False(result.Pipelines[1].Completed);
+        Assert.That(result.Pipelines[1].State, Is.EqualTo("RUNNING"));
+        Assert.That(result.Pipelines[1].Completed, Is.False);
 
         // {name: PENDING} -> PENDING
-        Assert.Equal("PENDING", result.Pipelines[2].State);
-        Assert.False(result.Pipelines[2].Completed);
+        Assert.That(result.Pipelines[2].State, Is.EqualTo("PENDING"));
+        Assert.That(result.Pipelines[2].Completed, Is.False);
     }
 
-    [Fact]
+    [Test]
     public async Task ListingPipelinesComposesTheQueryAndBuildsTheWebUrl()
     {
         using var handler = new StubHttpMessageHandler();
@@ -67,19 +66,17 @@ public sealed class PipelineToolTests
             Repository,
             Workspace,
             targetBranch: "refs/heads/feature/clamp",
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var uri = Assert.Single(handler.Requests).Uri!;
+        var uri = Expect.Single(handler.Requests).Uri!;
 
-        Assert.Contains("/repositories/acme/widgets/pipelines", uri.AbsolutePath, StringComparison.Ordinal);
-        Assert.Contains("target.branch=feature%2Fclamp", uri.Query, StringComparison.Ordinal);
-        Assert.Contains("sort=-created_on", uri.Query, StringComparison.Ordinal);
-        Assert.Contains("fields=", uri.Query, StringComparison.Ordinal);
+        Assert.That(uri.AbsolutePath, Does.Contain("/repositories/acme/widgets/pipelines"));
+        Assert.That(uri.Query, Does.Contain("target.branch=feature%2Fclamp"));
+        Assert.That(uri.Query, Does.Contain("sort=-created_on"));
+        Assert.That(uri.Query, Does.Contain("fields="));
 
         // A pipeline carries no html link, so the page URL is composed from the build number.
-        Assert.Equal(
-            "https://bitbucket.org/acme/widgets/pipelines/results/8173",
-            result.Pipelines[0].Url);
+        Assert.That(result.Pipelines[0].Url, Is.EqualTo("https://bitbucket.org/acme/widgets/pipelines/results/8173"));
     }
 
     /// <summary>
@@ -87,12 +84,11 @@ public sealed class PipelineToolTests
     /// <c>SUCCESSFUL</c> in a result is <c>PASSED</c> in the filter, and asking for
     /// <c>status=SUCCESSFUL</c> matches nothing at all.
     /// </summary>
-    [Theory]
-    [InlineData("SUCCESSFUL", "PASSED")]
-    [InlineData("successful", "PASSED")]
-    [InlineData("PASSED", "PASSED")]
-    [InlineData("FAILED", "FAILED")]
-    [InlineData("RUNNING", "BUILDING")]
+    [TestCase("SUCCESSFUL", "PASSED")]
+    [TestCase("successful", "PASSED")]
+    [TestCase("PASSED", "PASSED")]
+    [TestCase("FAILED", "FAILED")]
+    [TestCase("RUNNING", "BUILDING")]
     public async Task StatusIsTranslatedIntoBitbucketsFilterVocabulary(string given, string sent)
     {
         using var handler = new StubHttpMessageHandler();
@@ -106,9 +102,9 @@ public sealed class PipelineToolTests
             Repository,
             Workspace,
             status: given,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Contains($"status={sent}", Assert.Single(handler.Requests).Uri!.Query, StringComparison.Ordinal);
+        Assert.That(Expect.Single(handler.Requests).Uri!.Query, Does.Contain($"status={sent}"));
     }
 
     /// <summary>
@@ -116,22 +112,22 @@ public sealed class PipelineToolTests
     /// "this repository has never run a pipeline". Refusing it here is the only way the caller finds
     /// out they asked the wrong question.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task AnUnknownStatusIsRefusedRatherThanSentAndSilentlyIgnored()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.ListPipelinesAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.ListPipelinesAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
             Workspace,
             status: "COMPLETED",
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("SUCCESSFUL", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.Requests);
+        Assert.That(exception.Message, Does.Contain("SUCCESSFUL"));
+        Assert.That(handler.Requests, Is.Empty);
     }
 
     /// <summary>
@@ -139,7 +135,7 @@ public sealed class PipelineToolTests
     /// <c>next</c> link. Following the cursor verbatim would return full objects — measured at
     /// 2,615 bytes each against 50 trimmed — so the field set is re-applied.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task APipelineCursorHasTheFieldSetReappliedToIt()
     {
         using var handler = new StubHttpMessageHandler();
@@ -152,9 +148,9 @@ public sealed class PipelineToolTests
             ToolTestHost.CreateOptions(),
             Repository,
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(first.NextCursor);
+        Assert.That(first.NextCursor, Is.Not.Null);
 
         handler.EnqueueJson(PipelineFixtures.PipelinePage);
 
@@ -164,15 +160,15 @@ public sealed class PipelineToolTests
             Repository,
             Workspace,
             cursor: first.NextCursor,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         var second = handler.Requests[1].Uri!;
 
-        Assert.Contains("page=2", second.Query, StringComparison.Ordinal);
-        Assert.Contains("fields=", second.Query, StringComparison.Ordinal);
+        Assert.That(second.Query, Does.Contain("page=2"));
+        Assert.That(second.Query, Does.Contain("fields="));
     }
 
-    [Fact]
+    [Test]
     public async Task GettingAPipelineMergesItsStepsAndNamesTheFailingOne()
     {
         using var handler = new StubHttpMessageHandler();
@@ -187,30 +183,30 @@ public sealed class PipelineToolTests
             Repository,
             "8173",
             Workspace,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(2, handler.Requests.Count);
-        Assert.Equal(2, result.Steps.Count);
+        Assert.That(handler.Requests.Count, Is.EqualTo(2));
+        Assert.That(result.Steps.Count, Is.EqualTo(2));
 
-        Assert.Equal("Test and Build", result.Steps[0].Name);
-        Assert.Equal("FAILED", result.Steps[0].State);
-        Assert.Equal("The step timed out.", result.Steps[0].ErrorMessage);
-        Assert.Equal("NOT_RUN", result.Steps[1].State);
+        Assert.That(result.Steps[0].Name, Is.EqualTo("Test and Build"));
+        Assert.That(result.Steps[0].State, Is.EqualTo("FAILED"));
+        Assert.That(result.Steps[0].ErrorMessage, Is.EqualTo("The step timed out."));
+        Assert.That(result.Steps[1].State, Is.EqualTo("NOT_RUN"));
 
-        Assert.Equal("{951411fa-aa47-472c-80ce-4f4f4899d1b3}", result.FailedStepUuid);
+        Assert.That(result.FailedStepUuid, Is.EqualTo("{951411fa-aa47-472c-80ce-4f4f4899d1b3}"));
 
         // The hint carries the error and the exact next call, so the log is a choice rather than a
         // reflex.
-        Assert.Contains("The step timed out.", result.Hint!, StringComparison.Ordinal);
-        Assert.Contains("getPipelineStepLog", result.Hint!, StringComparison.Ordinal);
-        Assert.Contains("{951411fa-aa47-472c-80ce-4f4f4899d1b3}", result.Hint!, StringComparison.Ordinal);
+        Assert.That(result.Hint!, Does.Contain("The step timed out."));
+        Assert.That(result.Hint!, Does.Contain("getPipelineStepLog"));
+        Assert.That(result.Hint!, Does.Contain("{951411fa-aa47-472c-80ce-4f4f4899d1b3}"));
     }
 
     /// <summary>
     /// A run can carry more steps than one page holds, and a truncated step list must not read like
     /// a complete one — the same rule the diff tools follow.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task AStepListCutShortByPagingSaysSo()
     {
         using var handler = new StubHttpMessageHandler();
@@ -220,16 +216,15 @@ public sealed class PipelineToolTests
         using var client = ToolTestHost.CreateClient(handler);
 
         var result = await PipelineReadTools.GetPipelineAsync(
-            client, ToolTestHost.CreateOptions(), Repository, "8173", Workspace, TestContext.Current.CancellationToken);
+            client, ToolTestHost.CreateOptions(), Repository, "8173", Workspace, TestContext.CurrentContext.CancellationToken);
 
-        Assert.Contains("only the first", result.Hint!, StringComparison.Ordinal);
+        Assert.That(result.Hint!, Does.Contain("only the first"));
     }
 
-    [Theory]
-    [InlineData("8173", "/pipelines/8173")]
-    [InlineData("#8173", "/pipelines/8173")]
-    [InlineData("{c1db2bb8-6168-4675-b85a-e95f450523f9}", "/pipelines/%7Bc1db2bb8-6168-4675-b85a-e95f450523f9%7D")]
-    [InlineData("c1db2bb8-6168-4675-b85a-e95f450523f9", "/pipelines/%7Bc1db2bb8-6168-4675-b85a-e95f450523f9%7D")]
+    [TestCase("8173", "/pipelines/8173")]
+    [TestCase("#8173", "/pipelines/8173")]
+    [TestCase("{c1db2bb8-6168-4675-b85a-e95f450523f9}", "/pipelines/%7Bc1db2bb8-6168-4675-b85a-e95f450523f9%7D")]
+    [TestCase("c1db2bb8-6168-4675-b85a-e95f450523f9", "/pipelines/%7Bc1db2bb8-6168-4675-b85a-e95f450523f9%7D")]
     public async Task APipelineIsAddressableByBuildNumberOrUuid(string pipeline, string expectedPath)
     {
         using var handler = new StubHttpMessageHandler();
@@ -239,22 +234,22 @@ public sealed class PipelineToolTests
         using var client = ToolTestHost.CreateClient(handler);
 
         _ = await PipelineReadTools.GetPipelineAsync(
-            client, ToolTestHost.CreateOptions(), Repository, pipeline, Workspace, TestContext.Current.CancellationToken);
+            client, ToolTestHost.CreateOptions(), Repository, pipeline, Workspace, TestContext.CurrentContext.CancellationToken);
 
-        Assert.Contains(expectedPath, handler.Requests[0].Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.That(handler.Requests[0].Uri!.AbsolutePath, Does.Contain(expectedPath));
     }
 
-    [Fact]
+    [Test]
     public async Task ABranchNameIsNotAPipelineIdentifier()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineAsync(
-            client, ToolTestHost.CreateOptions(), Repository, "main", Workspace, TestContext.Current.CancellationToken));
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineAsync(
+            client, ToolTestHost.CreateOptions(), Repository, "main", Workspace, TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("listPipelines", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.Requests);
+        Assert.That(exception.Message, Does.Contain("listPipelines"));
+        Assert.That(handler.Requests, Is.Empty);
     }
 
     /// <summary>
@@ -263,7 +258,7 @@ public sealed class PipelineToolTests
     /// credential must not — a presigned URL carries its signature in the query string and storage
     /// rejects a request that also presents an <c>Authorization</c> header.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task TheLogRedirectCarriesTheRangeToStorageButNotTheCredential()
     {
         using var handler = new StubHttpMessageHandler();
@@ -283,25 +278,25 @@ public sealed class PipelineToolTests
             "8173",
             "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.That(handler.Requests.Count, Is.EqualTo(2));
 
         var api = handler.Requests[0];
         var storage = handler.Requests[1];
 
-        Assert.Equal("api.bitbucket.org", api.Uri!.Host);
-        Assert.True(api.Headers.ContainsKey("Authorization"));
+        Assert.That(api.Uri!.Host, Is.EqualTo("api.bitbucket.org"));
+        Assert.That(api.Headers.ContainsKey("Authorization"), Is.True);
 
-        Assert.EndsWith("s3.amazonaws.com", storage.Uri!.Host, StringComparison.Ordinal);
-        Assert.False(storage.Headers.ContainsKey("Authorization"));
-        Assert.Contains("bytes=", storage.Headers["Range"], StringComparison.Ordinal);
+        Assert.That(storage.Uri!.Host, Does.EndWith("s3.amazonaws.com"));
+        Assert.That(storage.Headers.ContainsKey("Authorization"), Is.False);
+        Assert.That(storage.Headers["Range"], Does.Contain("bytes="));
 
         // The ranged body began mid-line, so the half line is dropped rather than reported whole.
-        Assert.DoesNotContain("first partial line", result.Log, StringComparison.Ordinal);
-        Assert.Contains("second", result.Log, StringComparison.Ordinal);
-        Assert.True(result.Truncated);
-        Assert.Equal(1000, result.TotalBytes);
+        Assert.That(result.Log, Does.Not.Contain("first partial line"));
+        Assert.That(result.Log, Does.Contain("second"));
+        Assert.That(result.Truncated, Is.True);
+        Assert.That(result.TotalBytes, Is.EqualTo(1000));
     }
 
     /// <summary>
@@ -310,7 +305,7 @@ public sealed class PipelineToolTests
     /// that header was copied from. Found against the live API, not by a stub, because a stub does
     /// no content negotiation.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task TheLogRequestAcceptsAnOctetStream()
     {
         using var handler = new StubHttpMessageHandler();
@@ -325,16 +320,16 @@ public sealed class PipelineToolTests
             "8173",
             "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var accept = Assert.Single(handler.Requests).Headers["Accept"];
+        var accept = Expect.Single(handler.Requests).Headers["Accept"];
 
-        Assert.Contains("application/octet-stream", accept, StringComparison.Ordinal);
-        Assert.DoesNotContain("application/json", accept, StringComparison.Ordinal);
+        Assert.That(accept, Does.Contain("application/octet-stream"));
+        Assert.That(accept, Does.Not.Contain("application/json"));
     }
 
     /// <summary>Storage may ignore <c>Range</c> and send the whole log; the tail still comes back.</summary>
-    [Fact]
+    [Test]
     public async Task AnUnrangedLogResponseIsStillReducedToItsTail()
     {
         var builder = new StringBuilder();
@@ -357,15 +352,15 @@ public sealed class PipelineToolTests
             "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
             Workspace,
             maxLines: 5,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(5, result.LinesShown);
-        Assert.Contains("line 499", result.Log, StringComparison.Ordinal);
-        Assert.True(result.Truncated);
+        Assert.That(result.LinesShown, Is.EqualTo(5));
+        Assert.That(result.Log, Does.Contain("line 499"));
+        Assert.That(result.Truncated, Is.True);
     }
 
     /// <summary>A 416 means the range was refused outright; one unranged retry recovers.</summary>
-    [Fact]
+    [Test]
     public async Task ARefusedRangeIsRetriedOnceWithoutTheHeader()
     {
         using var handler = new StubHttpMessageHandler();
@@ -381,15 +376,15 @@ public sealed class PipelineToolTests
             "8173",
             "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(2, handler.Requests.Count);
-        Assert.True(handler.Requests[0].Headers.ContainsKey("Range"));
-        Assert.False(handler.Requests[1].Headers.ContainsKey("Range"));
-        Assert.Equal("only\nlines\n", result.Log);
+        Assert.That(handler.Requests.Count, Is.EqualTo(2));
+        Assert.That(handler.Requests[0].Headers.ContainsKey("Range"), Is.True);
+        Assert.That(handler.Requests[1].Headers.ContainsKey("Range"), Is.False);
+        Assert.That(result.Log, Is.EqualTo("only\nlines\n"));
     }
 
-    [Fact]
+    [Test]
     public async Task SearchingALogSendsNoRangeAndReportsTheMatchCount()
     {
         using var handler = new StubHttpMessageHandler();
@@ -407,23 +402,23 @@ public sealed class PipelineToolTests
             Workspace,
             pattern: "error",
             contextLines: 0,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         // A grep has to see every line, so this one is deliberately not ranged.
-        Assert.False(Assert.Single(handler.Requests).Headers.ContainsKey("Range"));
+        Assert.That(Expect.Single(handler.Requests).Headers.ContainsKey("Range"), Is.False);
 
-        Assert.Equal(2, result.MatchCount);
-        Assert.Contains("ERROR: boom", result.Log, StringComparison.Ordinal);
-        Assert.DoesNotContain("quiet", result.Log, StringComparison.Ordinal);
+        Assert.That(result.MatchCount, Is.EqualTo(2));
+        Assert.That(result.Log, Does.Contain("ERROR: boom"));
+        Assert.That(result.Log, Does.Not.Contain("quiet"));
     }
 
-    [Fact]
+    [Test]
     public async Task AModeThatContradictsPatternIsRefused()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineStepLogAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineStepLogAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
@@ -432,19 +427,19 @@ public sealed class PipelineToolTests
             Workspace,
             mode: "tail",
             pattern: "boom",
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("contradicts pattern", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.Requests);
+        Assert.That(exception.Message, Does.Contain("contradicts pattern"));
+        Assert.That(handler.Requests, Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task SearchModeWithoutAPatternIsRefused()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineStepLogAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.GetPipelineStepLogAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
@@ -452,16 +447,16 @@ public sealed class PipelineToolTests
             "{951411fa-aa47-472c-80ce-4f4f4899d1b3}",
             Workspace,
             mode: "search",
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("needs pattern", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("needs pattern"));
     }
 
     /// <summary>
     /// A pipeline 403 must name the scope that is actually missing. A credential created before
     /// these tools existed has every pull-request scope and still cannot read a pipeline.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task APipelineForbiddenNamesThePipelineScopeAndTheReLoginStep()
     {
         using var handler = new StubHttpMessageHandler();
@@ -469,26 +464,26 @@ public sealed class PipelineToolTests
 
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.ListPipelinesAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.ListPipelinesAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("read:pipeline:bitbucket", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("bitbucket-mcp logout", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("listCodeInsights", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("read:pipeline:bitbucket"));
+        Assert.That(exception.Message, Does.Contain("bitbucket-mcp logout"));
+        Assert.That(exception.Message, Does.Contain("listCodeInsights"));
 
         // It must not recite the pull-request scopes, which are not the problem here.
-        Assert.DoesNotContain("write:pullrequest:bitbucket", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Not.Contain("write:pullrequest:bitbucket"));
     }
 
     /// <summary>
     /// listCodeInsights runs on the repository scope every credential already holds, so it must not
     /// tell anyone to add a pipeline scope it does not need.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task ACodeInsightsForbiddenDoesNotAskForThePipelineScope()
     {
         using var handler = new StubHttpMessageHandler();
@@ -496,18 +491,18 @@ public sealed class PipelineToolTests
 
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
             "cbdb1c937854dda0367163e91df93f55356e79cd",
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.DoesNotContain("read:pipeline:bitbucket", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Not.Contain("read:pipeline:bitbucket"));
     }
 
-    [Fact]
+    [Test]
     public async Task CodeInsightsExpandsOnlyTheFailingReport()
     {
         using var handler = new StubHttpMessageHandler();
@@ -522,50 +517,50 @@ public sealed class PipelineToolTests
             Repository,
             "cbdb1c937854dda0367163e91df93f55356e79cd",
             Workspace,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         // Two reports, but only the FAILED one costs a second request.
-        Assert.Equal(2, handler.Requests.Count);
-        Assert.Equal(2, result.Reports.Count);
+        Assert.That(handler.Requests.Count, Is.EqualTo(2));
+        Assert.That(result.Reports.Count, Is.EqualTo(2));
 
-        var annotation = Assert.Single(result.Annotations);
+        var annotation = Expect.Single(result.Annotations);
 
-        Assert.Equal("src/Api/Retry.cs", annotation.Path);
-        Assert.Equal(42, annotation.Line);
-        Assert.Equal("HIGH", annotation.Severity);
-        Assert.Equal("Static analysis", annotation.ReportTitle);
+        Assert.That(annotation.Path, Is.EqualTo("src/Api/Retry.cs"));
+        Assert.That(annotation.Line, Is.EqualTo(42));
+        Assert.That(annotation.Severity, Is.EqualTo("HIGH"));
+        Assert.That(annotation.ReportTitle, Is.EqualTo("Static analysis"));
     }
 
-    [Fact]
+    [Test]
     public async Task ACodeInsightsCursorWithoutAReportIdIsRefused()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
             client,
             ToolTestHost.CreateOptions(),
             Repository,
             "cbdb1c937854dda0367163e91df93f55356e79cd",
             Workspace,
             cursor: "whatever",
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("reportId", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.Requests);
+        Assert.That(exception.Message, Does.Contain("reportId"));
+        Assert.That(handler.Requests, Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task ABranchNameIsNotACommit()
     {
         using var handler = new StubHttpMessageHandler();
         using var client = ToolTestHost.CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
+        var exception = await Expect.ThrowsAsync<McpException>(() => PipelineReadTools.ListCodeInsightsAsync(
             client, ToolTestHost.CreateOptions(), Repository, "main", Workspace,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Contains("commit hash", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("commit hash"));
     }
 
     private static HttpResponseMessage PartialContent(string body, long from, long total)

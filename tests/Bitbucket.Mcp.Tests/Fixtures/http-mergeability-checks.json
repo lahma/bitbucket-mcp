@@ -1,0 +1,35 @@
+{
+  "_fixture": "SYNTHETIC - shaped after the pullrequest_mergeability_checks schema in Bitbucket's OpenAPI document (read 2026-11-18), not captured from a live account. One blocking standard check (approvals), a failed build check that does not block, a clean git check, the state and permission checks, and a custom check with a message.",
+  "size": 6,
+  "values": [
+    { "type": "pullrequest_state_check", "status": "PASSED", "required": true, "blocking": false, "state": "OPEN" },
+    { "type": "current_user_permission_check", "status": "PASSED", "required": true, "blocking": false },
+    { "type": "git_mergeability_check", "status": "PASSED", "required": true, "blocking": false, "reason": "clean" },
+    {
+      "type": "standard_merge_check",
+      "status": "FAILED",
+      "required": true,
+      "blocking": true,
+      "check": { "type": "standard_merge_check_definition", "kind": "minimum_approvals" },
+      "requirement": { "minimum_approvals": 2 },
+      "observed": { "approval_count": 1 }
+    },
+    {
+      "type": "standard_merge_check",
+      "status": "FAILED",
+      "required": false,
+      "blocking": false,
+      "check": { "type": "standard_merge_check_definition", "kind": "minimum_successful_builds" },
+      "requirement": { "minimum_successful_builds": 1 },
+      "observed": { "successful_build_count": 0 }
+    },
+    {
+      "type": "custom_pre_merge_check",
+      "status": "PASSED",
+      "required": true,
+      "blocking": false,
+      "check": { "type": "custom_merge_check_definition", "id": "ari:cloud:ecosystem::extension/license-scan", "name": "License scan" },
+      "message": "No new licenses."
+    }
+  ]
+}

@@ -1,18 +1,20 @@
 # bitbucket-mcp
 
+<!-- mcp-name: io.github.lahma/bitbucket-mcp -->
+
 A self-owned [Model Context Protocol](https://modelcontextprotocol.io) server for **Bitbucket
-Cloud**, covering the full pull-request lifecycle and Bitbucket Pipelines build diagnosis in twenty
-tools — list, read, diff, comment, resolve, task, review, create, update, merge, decline, and then
-find the failing build, the failing step and the line of its log that explains it. It includes the
-gaps in Atlassian's own Bitbucket tools (update, decline, request changes, unapprove, diffstat,
-inline comments, thread resolution, tasks, build statuses, default reviewers, pipeline logs, code
-insights). It is written in C# on .NET 10 and ships as a Native AOT binary per platform: one
+Cloud**, covering the full pull-request lifecycle and Bitbucket Pipelines build diagnosis in
+twenty-two tools — list, read, diff, comment, edit, resolve, task, review, create, update, check what
+blocks a merge, merge (merge queues included), decline, and then find the failing build, the failing
+step and the line of its log that explains it. It includes the gaps in Atlassian's own Bitbucket
+tools (update, decline, request changes, unapprove, diffstat, inline comments, comment edits, thread
+resolution, tasks, build statuses, mergeability, default reviewers, pipeline logs, code insights). It is written in C# on .NET 10 and ships as a Native AOT binary per platform: one
 self-contained executable, about 18 MB on win-x64 (6 MB in the release archive), starting in
 roughly ten milliseconds. The point of the project is a supply chain one person can actually audit
 — four direct package references over a transitive closure of seventeen, every one of them from
 Microsoft or the official MCP organisation:
 [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) (pinned exactly to
-2.2.0), `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console` and
+2.4.0), `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console` and
 `System.Security.Cryptography.ProtectedData`. Tool names follow Atlassian's camelCase verbNoun
 convention, so it sits alongside the official Atlassian MCP server without a naming clash. MIT
 licensed.
@@ -23,21 +25,23 @@ Bitbucket Data Center is explicitly out of scope.
 
 | Tool | What it does | Annotations |
 |---|---|---|
-| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches, `closeSourceBranch`, web URL). Defaults to open ones only; `sourceBranch` answers "does this branch already have a pull request?". | read-only, idempotent |
+| `listPullRequests` | Lists a repository's pull requests, most recently updated first — a summary per pull request (id, title, state, author, branches, `closeSourceBranch`, web URL). Defaults to open ones only; `sourceBranch` answers "does this branch already have a pull request?", `reviewer` "what is waiting on my review?", `destinationBranch` "what goes into `main`?". | read-only, idempotent |
 | `getPullRequest` | Reads one pull request in full: title, description, state, branches, web URL, reviewers and participants with their approvals. | read-only, idempotent |
 | `getPullRequestDiff` | Fetches a pull request's changes: with no arguments it lists the changed files, and passing `paths` returns those files' unified diff. Truncation is always marked inline. | read-only, idempotent |
-| `getPullRequestComments` | Lists a pull request's comments — general and inline — oldest first, with deleted comments filtered out. | read-only, idempotent |
+| `getPullRequestComments` | Lists a pull request's comments — general and inline — oldest first, with deleted comments filtered out; `unresolvedOnly` leaves out the threads already resolved. | read-only, idempotent |
 | `listDefaultReviewers` | Lists the repository's effective default reviewers with their account UUIDs, including the ones inherited from its project. Where reviewer UUIDs come from when there is no pull request to read them off. | read-only, idempotent |
-| `listPullRequestStatuses` | Lists the build statuses reported against a pull request — the merge-readiness check to run before `mergePullRequest`. | read-only, idempotent |
+| `listPullRequestStatuses` | Lists the build statuses reported against a pull request, each with the URL of its run. | read-only, idempotent |
 | `listPullRequestTasks` | Lists a pull request's tasks, `RESOLVED` or `UNRESOLVED` — the outstanding work, which the comments alone do not tell you. | read-only, idempotent |
+| `getPullRequestMergeability` | Bitbucket's own dry run of a merge: state, permission, conflicts, every configured merge check (approvals, builds, tasks…) and the merge queue, blocking checks first — the check to make before `mergePullRequest`. | read-only, idempotent |
 | `createPullRequest` | Opens a new pull request. Title and source branch are required, and `closeSourceBranch` and `draft` are settable here. Reviewers are account UUIDs and are entirely optional: omit `reviewers` for the repository's own default-reviewer rule, or pass `[]` to open it with nobody on it. | write, **not** destructive |
 | `updatePullRequest` | Changes an existing pull request's title, description, destination branch, reviewer list, `closeSourceBranch` flag or `draft` status. `reviewers` replaces the whole list; the two flags are only reachable here once the pull request is open. | write, destructive |
 | `addPullRequestComment` | Posts a comment: general, a reply, or inline on a line of the diff — anchored by `codeSnippet` copied verbatim out of the diff, or by `line` plus `lineType`. | write, **not** destructive |
+| `updatePullRequestComment` | Corrects one of your own comments, or deletes it. The old text is gone either way; an edited inline comment keeps its line. | write, destructive, idempotent |
 | `resolvePullRequestComment` | Marks a comment thread resolved, or reopens it — any top-level comment, inline or on the pull request as a whole. Asking for the state it is already in is not an error. | write, **not** destructive, idempotent |
 | `addPullRequestTask` | Adds a task — one tracked item of work, optionally hung off a comment. Bitbucket counts these, and a repository can require them resolved before merging. | write, **not** destructive |
 | `updatePullRequestTask` | Ticks a task off, reopens it, or rewrites its text. | write, **not** destructive, idempotent |
 | `setPullRequestReviewStatus` | Sets the authenticated user's own review state: `APPROVED`, `CHANGES_REQUESTED` or `UNAPPROVED` (clears both flags). | write, **not** destructive, idempotent |
-| `mergePullRequest` | Merges a pull request into its destination branch, with an optional merge strategy. | write, destructive |
+| `mergePullRequest` | Merges a pull request into its destination branch, with an optional merge strategy. When Bitbucket merges in the background or through a merge queue it waits up to 25 seconds, reporting progress; a merge still under way comes back `QUEUED`, never as a failure. | write, destructive |
 | `declinePullRequest` | Declines a pull request, closing it without merging. | write, destructive |
 | `listPipelines` | Lists a repository's pipeline runs, newest first, filterable by branch, commit or state — the answer to "is CI green?", and the bridge from a pull request to its builds. | read-only, idempotent |
 | `getPipeline` | Reads one run with its steps: which step failed, its `errorMessage`, and the `stepUuid` to read next. Often the whole answer without touching a log. | read-only, idempotent |
@@ -52,7 +56,7 @@ diagnosis. Reading pipelines does need one scope the pull-request tools do not �
 Every tool is annotated open-world (it talks to a live Bitbucket workspace) and returns structured
 content. `Destructive` defaults to *true* in the MCP SDK, so the six write tools that do not
 destroy anything say otherwise explicitly — a client should prompt before a merge, not before a
-comment. The full annotation table, and the two rows that are judgement calls rather than readings
+comment. The full annotation table, and the three rows that are judgement calls rather than readings
 of the API, are in [AGENTS.md](AGENTS.md#tool-table).
 
 ## Install
@@ -76,8 +80,11 @@ named `bitbucket-mcp-{version}-{rid}` and contains the executable, `LICENSE` and
 | Linux ARM64 | `linux-arm64` | `bitbucket-mcp-{version}-linux-arm64.tar.gz` |
 | macOS Apple silicon | `osx-arm64` | `bitbucket-mcp-{version}-osx-arm64.tar.gz` |
 
+The Linux binaries need glibc 2.34 or newer — Ubuntu 22.04, Debian 12, RHEL 9 and their
+successors. The release checks that floor on every build, so it cannot move without a release note.
+
 ```bash
-tar -xzf bitbucket-mcp-1.2.1-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.3.0-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -101,7 +108,7 @@ The same server is published to nuget.org as
 there is nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.2.1 --yes status
+dnx bitbucket-mcp@1.3.0 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -114,7 +121,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.2.1", "--yes"],
+      "args": ["bitbucket-mcp@1.3.0", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -124,7 +131,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.2.1`) rather than floating: an MCP server is something an agent runs on your
+Pin the version (`@1.3.0`) rather than floating: an MCP server is something an agent runs on your
 behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
 needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
 missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
@@ -485,16 +492,21 @@ A review, end to end:
    Affects only the authenticated user's own stance. `UNAPPROVED` withdraws both an approval and a
    change request.
 
-8. **Check the builds, then merge.**
+8. **Check what blocks the merge, then merge.**
 
    ```text
-   listPullRequestStatuses { "repository": "my-repo", "pullRequestId": 42 }
+   getPullRequestMergeability { "repository": "my-repo", "pullRequestId": 42 }
    ```
 
-   Every CI result, deployment and external check, each `SUCCESSFUL`, `FAILED`, `INPROGRESS` or
-   `STOPPED`, with the URL of the run. Bitbucket will merge over a failing build if the repository
-   does not require it, so this is the check to make before `mergePullRequest`. An empty list means
-   nothing has reported yet — which is not the same as passing.
+   Bitbucket's own dry run of the merge: the pull request's state, your permission, git conflicts,
+   every merge check the repository configures — required approvals, successful builds, resolved
+   tasks — and the merge queue, each `blocking` or not, the blocking ones first.
+   `listPullRequestStatuses` then names the build behind a blocking build check, with the URL of
+   its run; an empty list means nothing has reported yet, which is not the same as passing.
+
+   `mergePullRequest` either merges, or — when Bitbucket merges in the background or holds the pull
+   request in its branch's merge queue — waits up to 25 seconds and answers `QUEUED`. A queued merge
+   is under way: do not merge again, and follow it with `getPullRequest` until it shows `MERGED`.
 
 9. **When the build is red, find out why.**
 

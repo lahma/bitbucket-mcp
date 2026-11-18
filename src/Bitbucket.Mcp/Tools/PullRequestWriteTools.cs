@@ -14,8 +14,8 @@ using ModelContextProtocol.Server;
 namespace Bitbucket.Mcp.Tools;
 
 /// <summary>
-/// The write half of the pull request surface: create, update, comment, resolve, task, review,
-/// merge, decline.
+/// The write half of the pull request surface: create, update, comment, edit a comment, resolve,
+/// task, review, merge, decline.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -43,6 +43,13 @@ internal sealed class PullRequestWriteTools
 {
     /// <summary>Bitbucket's object-type discriminator for a merge body.</summary>
     private const string MergeRequestType = "pullrequest_merge_parameters";
+
+    /// <summary>
+    /// The state <c>mergePullRequest</c> reports for a merge that has not landed yet. Not one of
+    /// Bitbucket's pull request states: while queued the pull request is still <c>OPEN</c>, and
+    /// reporting that would read as "nothing happened" — an invitation to merge again.
+    /// </summary>
+    private const string QueuedMergeState = "QUEUED";
 
     private PullRequestWriteTools()
     {
@@ -394,6 +401,79 @@ internal sealed class PullRequestWriteTools
     }
 
     [McpServerTool(
+        Name = "updatePullRequestComment",
+        Title = "Edit or delete pull request comment",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Replaces the text of one of your own comments with content, or deletes it with delete=true — for a " +
+        "comment that was wrong, posted twice, or put on the wrong line. The old text is gone either way, and " +
+        "only the comment's author may do either. An inline comment keeps its anchor when edited; to move it " +
+        "to another line, delete it and add a new one with addPullRequestComment. Deleting leaves replies in " +
+        "place under a blanked comment.")]
+    public static async Task<CommentChangeResult> UpdatePullRequestCommentAsync(
+        BitbucketApiClient client,
+        BitbucketMcpOptions options,
+        [Description("Repository slug — the second URL segment of bitbucket.org/{workspace}/{repository}, not the repository's display name.")]
+        string repository,
+        [Description("The pull request number, as it appears in the pull request's URL.")]
+        int pullRequestId,
+        [Description("The comment to change, from getPullRequestComments or addPullRequestComment.")]
+        long commentId,
+        [Description("The comment's new text, as Markdown. It replaces the whole comment. Pass exactly one of content and delete.")]
+        string? content = null,
+        [Description("true deletes the comment instead of editing it. Pass exactly one of content and delete.")]
+        bool? delete = null,
+        [Description("Workspace slug — the first URL segment of bitbucket.org/{workspace}/{repository}, not the workspace's display name. Optional when BITBUCKET_DEFAULT_WORKSPACE is set.")]
+        string? workspace = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        var slug = ToolDefaults.RequireRepository(repository);
+        var resolvedWorkspace = ToolDefaults.ResolveWorkspace(workspace, options);
+        var id = ToolDefaults.RequirePullRequestId(pullRequestId);
+        var comment = RequireCommentId(commentId);
+
+        var deleting = delete == true;
+        var editing = !string.IsNullOrWhiteSpace(content);
+
+        if (deleting == editing)
+        {
+            throw new McpException(deleting
+                ? "Pass either content or delete=true, not both: an edit and a deletion are different changes."
+                : "Nothing to change: pass content with the comment's new text, or delete=true to delete it.");
+        }
+
+        var context = new ToolCallContext("updatePullRequestComment", resolvedWorkspace, slug, id);
+
+        return await ToolErrors.ExecuteAsync(context, async () =>
+        {
+            if (deleting)
+            {
+                await client.DeleteCommentAsync(resolvedWorkspace, slug, id, comment, cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new CommentChangeResult { CommentId = comment, Deleted = true };
+            }
+
+            var updated = await client.UpdateCommentAsync(resolvedWorkspace, slug, id, comment, content!, cancellationToken)
+                .ConfigureAwait(false);
+
+            return new CommentChangeResult
+            {
+                CommentId = updated.Id ?? comment,
+                Content = updated.Content?.Raw,
+                UpdatedOn = updated.UpdatedOn,
+                Url = updated.Links?.Html?.Href,
+            };
+        }).ConfigureAwait(false);
+    }
+
+    [McpServerTool(
         Name = "addPullRequestTask",
         Title = "Add pull request task",
         ReadOnly = false,
@@ -617,10 +697,12 @@ internal sealed class PullRequestWriteTools
         UseStructuredContent = true)]
     [Description(
         "Merges a pull request into its destination branch. This rewrites the destination branch and cannot " +
-        "be undone from here — read the pull request with getPullRequest and confirm it is the right one and " +
-        "actually approved, and check listPullRequestStatuses for a build that has not passed, before " +
-        "calling. A strategy the repository has disabled is rejected, not substituted, and a conflicting " +
-        "pull request fails with a 409 rather than merging partially.")]
+        "be undone from here — read the pull request with getPullRequest and confirm it is the right one, " +
+        "and call getPullRequestMergeability for what still blocks it (approvals, builds, tasks, conflicts, " +
+        "permissions), before calling. A strategy the repository has disabled is rejected, not substituted, " +
+        "and a conflicting pull request fails with a 409 rather than merging partially. When Bitbucket merges " +
+        "in the background or through a merge queue, this waits up to 25 seconds; a merge that has not landed " +
+        "by then comes back with state QUEUED and must not be merged again.")]
     public static async Task<MergeResult> MergePullRequestAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -636,6 +718,7 @@ internal sealed class PullRequestWriteTools
         string? message = null,
         [Description("Delete the source branch after merging. Omit to use the pull request's own close_source_branch setting.")]
         bool? closeSourceBranch = null,
+        IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -656,14 +739,24 @@ internal sealed class PullRequestWriteTools
 
         return await ToolErrors.ExecuteAsync(context, async () =>
         {
-            var dto = await client.MergeAsync(resolvedWorkspace, slug, id, body, cancellationToken)
+            var outcome = await client.MergeAsync(
+                    resolvedWorkspace,
+                    slug,
+                    id,
+                    body,
+                    progress is null ? null : wait => progress.Report(MergeProgress(wait)),
+                    cancellationToken)
                 .ConfigureAwait(false);
 
-            return new MergeResult
-            {
-                State = dto.State,
-                MergeCommitHash = dto.MergeCommit?.Hash,
-            };
+            return outcome.PullRequest is { } merged
+                ? new MergeResult { State = merged.State, MergeCommitHash = merged.MergeCommit?.Hash }
+                : new MergeResult
+                {
+                    State = QueuedMergeState,
+                    TaskId = outcome.TaskId,
+                    InMergeQueue = outcome.InMergeQueue,
+                    Next = QueuedMergeAdvice(outcome),
+                };
         }).ConfigureAwait(false);
     }
 
@@ -728,6 +821,34 @@ internal sealed class PullRequestWriteTools
 
     private static PullRequestEndpointRequest Endpoint(string branch) =>
         new() { Branch = new BranchRequest { Name = branch.Trim() } };
+
+    /// <summary>One look at an unfinished merge task, as an MCP progress notification.</summary>
+    private static ProgressNotificationValue MergeProgress(MergeWait wait) => new()
+    {
+        Progress = wait.Attempt,
+        Total = wait.Attempts,
+        Message = wait.InMergeQueue
+            ? "The pull request is waiting in the destination branch's merge queue."
+            : "Bitbucket is still merging the pull request in the background.",
+    };
+
+    /// <summary>What a caller does about a merge that had not landed when the wait ended.</summary>
+    private static string QueuedMergeAdvice(MergeOutcome outcome)
+    {
+        const string FollowUp =
+            "Do not call mergePullRequest again to wait for it. getPullRequest shows state MERGED once it " +
+            "lands; getPullRequestMergeability shows whether it is still queued and what holds it.";
+
+        if (outcome.InMergeQueue)
+        {
+            return "The pull request is in its destination branch's merge queue, which merges it once the " +
+                   "queue's own checks pass - that can take as long as its builds do. " + FollowUp;
+        }
+
+        return outcome.TaskId is null
+            ? "Bitbucket accepted the merge but did not name a task this server can follow. " + FollowUp
+            : "Bitbucket is still merging the pull request in the background. " + FollowUp;
+    }
 
     /// <summary>Rejects a comment id that cannot exist, before it becomes a confusing 404.</summary>
     private static long RequireCommentId(long commentId) => commentId > 0

@@ -2,7 +2,6 @@ using System.Reflection;
 
 using Bitbucket.Mcp.Http;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -20,22 +19,10 @@ namespace Bitbucket.Mcp.Tests.Http;
 public class FieldSetTests
 {
     /// <summary>The name and value of every string constant on <see cref="FieldSets"/>.</summary>
-    public static TheoryData<string, string> AllFieldSets
-    {
-        get
-        {
-            var data = new TheoryData<string, string>();
+    public static IEnumerable<TestCaseData> AllFieldSets =>
+        Constants().Select(constant => new TestCaseData(constant.Name, (string) constant.GetRawConstantValue()!));
 
-            foreach (var constant in Constants())
-            {
-                data.Add(constant.Name, (string) constant.GetRawConstantValue()!);
-            }
-
-            return data;
-        }
-    }
-
-    [Fact]
+    [Test]
     public void EveryPaginatedFieldSetRequestsNext()
     {
         var paginated = new List<string>();
@@ -54,16 +41,14 @@ public class FieldSetTests
 
             paginated.Add(constant.Name);
 
-            Assert.Contains(
-                "next",
-                Entries(value));
+            Assert.That(Entries(value), Does.Contain("next"));
         }
 
         // Guards the rule against becoming vacuous if the paginated sets are ever renamed away.
-        Assert.NotEmpty(paginated);
+        Assert.That(paginated, Is.Not.Empty);
     }
 
-    [Fact]
+    [Test]
     public void NonPaginatedFieldSetsExistSoTheRuleIsDiscriminating()
     {
         var unpaginated = new List<string>();
@@ -75,49 +60,46 @@ public class FieldSetTests
             if (!value.Contains("values.", StringComparison.Ordinal))
             {
                 unpaginated.Add(constant.Name);
-                Assert.DoesNotContain("next", Entries(value));
+                Assert.That(Entries(value), Does.Not.Contain("next"));
             }
         }
 
-        Assert.NotEmpty(unpaginated);
+        Assert.That(unpaginated, Is.Not.Empty);
     }
 
-    [Theory]
-    [MemberData(nameof(AllFieldSets))]
+    [TestCaseSource(nameof(AllFieldSets))]
     public void EveryFieldSetIsANonEmptyCommaSeparatedListWithoutWhitespace(string name, string value)
     {
-        Assert.False(string.IsNullOrEmpty(value), $"{name} is empty.");
+        Assert.That(string.IsNullOrEmpty(value), Is.False, $"{name} is empty.");
 
         // Whitespace would be sent as %20 inside the query value; Bitbucket does not trim it and
         // the whole field list is then silently ignored.
-        Assert.False(value.Any(char.IsWhiteSpace), $"{name} contains whitespace.");
+        Assert.That(value.Any(char.IsWhiteSpace), Is.False, $"{name} contains whitespace.");
 
-        Assert.DoesNotContain(",,", value, StringComparison.Ordinal);
-        Assert.False(value.StartsWith(','), $"{name} starts with a comma.");
-        Assert.False(value.EndsWith(','), $"{name} ends with a comma.");
+        Assert.That(value, Does.Not.Contain(",,"));
+        Assert.That(value.StartsWith(','), Is.False, $"{name} starts with a comma.");
+        Assert.That(value.EndsWith(','), Is.False, $"{name} ends with a comma.");
 
         foreach (var entry in Entries(value))
         {
-            Assert.NotEqual(string.Empty, entry);
-            Assert.False(entry.StartsWith('.'), $"{name} contains the malformed entry '{entry}'.");
-            Assert.False(entry.EndsWith('.'), $"{name} contains the malformed entry '{entry}'.");
+            Assert.That(entry, Is.Not.EqualTo(string.Empty));
+            Assert.That(entry.StartsWith('.'), Is.False, $"{name} contains the malformed entry '{entry}'.");
+            Assert.That(entry.EndsWith('.'), Is.False, $"{name} contains the malformed entry '{entry}'.");
         }
     }
 
-    [Theory]
-    [MemberData(nameof(AllFieldSets))]
+    [TestCaseSource(nameof(AllFieldSets))]
     public void NoFieldSetRepeatsAnEntry(string name, string value)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var entry in Entries(value))
         {
-            Assert.True(seen.Add(entry), $"{name} names '{entry}' more than once.");
+            Assert.That(seen.Add(entry), Is.True, $"{name} names '{entry}' more than once.");
         }
     }
 
-    [Theory]
-    [MemberData(nameof(AllFieldSets))]
+    [TestCaseSource(nameof(AllFieldSets))]
     public void PaginatedFieldSetsOnlyNameEnvelopeKeysAndValuesMembers(string name, string value)
     {
         var entries = Entries(value);
@@ -131,9 +113,7 @@ public class FieldSetTests
         {
             var isEnvelopeKey = entry is "next" or "size" or "page" or "pagelen";
 
-            Assert.True(
-                isEnvelopeKey || entry.StartsWith("values.", StringComparison.Ordinal),
-                $"{name} is a paginated field set but names '{entry}', which is neither an envelope key nor a values.* member.");
+            Assert.That(isEnvelopeKey || entry.StartsWith("values.", StringComparison.Ordinal), Is.True, $"{name} is a paginated field set but names '{entry}', which is neither an envelope key nor a values.* member.");
         }
     }
 

@@ -1,3 +1,46 @@
+# 1.3.0
+
+- `mergePullRequest` follows a merge Bitbucket turns into a task instead of reporting it as an
+  error. A merge into a branch with a **merge queue** answers `202` even when `async` is not set,
+  and so does a merge that runs past Bitbucket's synchronous timeout; both used to come back as "open
+  the Bitbucket UI". The task is now polled for up to 25 seconds, with MCP progress notifications,
+  and a merge that lands in that time comes back as `MERGED` exactly as before. One that has not
+  comes back with state `QUEUED`, its `taskId`, `inMergeQueue` and what to do next — never as a
+  failure, and never as an invitation to merge again. Only the pull request's own task-status
+  endpoint on the API host is followed, by id.
+- `getPullRequestMergeability` (new) is Bitbucket's own dry run of a merge: the pull request's
+  state, your permission to merge, git conflicts, every configured merge check — required approvals,
+  successful builds, resolved tasks — and the merge queue, each marked blocking or not, the blocking
+  ones first. It answers "what still stops this merge?" in one call, which statuses and approvals
+  read separately never could, and it is how to tell whether a `QUEUED` merge is still queued.
+- `updatePullRequestComment` (new) edits one of your own comments, or deletes it with
+  `delete=true` — for the comment that was wrong, posted twice or put on the wrong line, which until
+  now could only be followed by a second comment. It is marked destructive: the old text is gone.
+- `getPullRequestComments` takes `unresolvedOnly=true`, which leaves out the threads already
+  resolved, replies included: the review comments still waiting for an answer, in one call.
+- `listPullRequests` takes `reviewer` ("what is waiting on my review?") and `destinationBranch`
+  ("what goes into `main`?").
+- `listPipelines`' `targetBranch` errors named the wrong argument (`sourceBranch`) and spoke of
+  pull requests; they now name the argument that was refused.
+- The Linux binaries need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9 and later), and the
+  release now checks that floor. `linux-x64` is built on `ubuntu-24.04` rather than
+  `ubuntu-latest`, which moved to 26.04 — a newer build host would have raised the floor silently.
+- The server manifest is one the official MCP Registry accepts (the 2025-12-11 schema, a
+  description within 100 characters, the NuGet service index as `registryBaseUrl`), and the README
+  carries the `mcp-name` marker the registry checks ownership against. Nothing is published to the
+  registry yet; this is what makes 1.3.0 and later listable.
+- Stays on .NET 10 (LTS). .NET 11 shipped on 2026-11-10, and building this server on it was measured
+  rather than assumed: the binary grows 2%, startup does not change, support ends the same month,
+  and a .NET 11 tool package would stop `dnx` — and with it the Claude Code plugin — working for
+  anyone without the .NET 11 runtime.
+- Dependencies: `ModelContextProtocol` 2.2.0 to 2.4.0, `Microsoft.Extensions.*` and
+  `System.Security.Cryptography.ProtectedData` 10.0.12 to 10.0.15. The build moves to Fallout
+  10.5.0, which clears two high-severity advisories its predecessor restored into `build/`, and the
+  `NuGet.Frameworks` pin it needed is gone.
+- For contributors: the tests run on NUnit 5 and Microsoft.Testing.Platform —
+  `dotnet test --project tests/Bitbucket.Mcp.Tests` — and on GitHub Actions every failing test is
+  annotated at its file and line.
+
 # 1.2.1
 
 - The plugin manifest no longer blanks an ambient `BITBUCKET_*` credential

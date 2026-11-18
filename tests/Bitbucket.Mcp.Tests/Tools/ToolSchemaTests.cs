@@ -2,7 +2,6 @@ using System.Text.Json;
 
 using Bitbucket.Mcp.Tools.Models;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Tools;
 
@@ -26,101 +25,108 @@ namespace Bitbucket.Mcp.Tests.Tools;
 public class ToolSchemaTests
 {
     /// <summary>Parameter names the SDK must never expose: they are bound from DI or the protocol.</summary>
-    private static readonly string[] NeverInSchema = ["client", "options", "cancellationToken"];
+    private static readonly string[] NeverInSchema = ["client", "options", "progress", "cancellationToken"];
 
     /// <summary>
     /// D6, asserted where it matters: the schemas above are only the shipped ones if the options
     /// that produced them are the shipped ones — our context first, the SDK's resolver second, and
     /// the whole thing frozen.
     /// </summary>
-    [Fact]
+    [Test]
     public void ProductionSerializerOptionsPutOurContextFirstAndAreReadOnly()
     {
         var options = McpServerSetup.CreateToolSerializerOptions();
 
-        Assert.True(options.IsReadOnly);
-        Assert.Equal(2, options.TypeInfoResolverChain.Count);
-        Assert.IsType<BitbucketToolJsonContext>(options.TypeInfoResolverChain[0]);
+        Assert.That(options.IsReadOnly, Is.True);
+        Assert.That(options.TypeInfoResolverChain.Count, Is.EqualTo(2));
+        Assert.That(options.TypeInfoResolverChain[0], Is.TypeOf<BitbucketToolJsonContext>());
     }
 
-    [Theory]
-    [InlineData(
+    [TestCase(
         "listPullRequests",
-        "repository,workspace,state,author,sourceBranch,pageSize,cursor",
+        "repository,workspace,state,author,sourceBranch,reviewer,destinationBranch,pageSize,cursor",
         "repository")]
-    [InlineData(
+    [TestCase(
         "listPipelines",
         "repository,workspace,targetBranch,commit,status,pageSize,cursor",
         "repository")]
-    [InlineData(
+    [TestCase(
         "getPipeline",
         "repository,pipeline,workspace",
         "repository,pipeline")]
-    [InlineData(
+    [TestCase(
         "getPipelineStepLog",
         "repository,pipeline,stepUuid,workspace,mode,pattern,contextLines,maxLines",
         "repository,pipeline,stepUuid")]
-    [InlineData(
+    [TestCase(
         "listCodeInsights",
         "repository,commit,workspace,reportId,maxAnnotations,pageSize,cursor",
         "repository,commit")]
-    [InlineData(
+    [TestCase(
         "listDefaultReviewers",
         "repository,workspace,pageSize,cursor",
         "repository")]
-    [InlineData(
+    [TestCase(
         "listPullRequestStatuses",
         "repository,pullRequestId,workspace,pageSize,cursor",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
         "listPullRequestTasks",
         "repository,pullRequestId,workspace,pageSize,cursor",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
+        "updatePullRequestComment",
+        "repository,pullRequestId,commentId,content,delete,workspace",
+        "repository,pullRequestId,commentId")]
+    [TestCase(
         "resolvePullRequestComment",
         "repository,pullRequestId,commentId,resolved,workspace",
         "repository,pullRequestId,commentId,resolved")]
-    [InlineData(
+    [TestCase(
         "addPullRequestTask",
         "repository,pullRequestId,content,workspace,commentId",
         "repository,pullRequestId,content")]
-    [InlineData(
+    [TestCase(
         "updatePullRequestTask",
         "repository,pullRequestId,taskId,workspace,state,content",
         "repository,pullRequestId,taskId")]
-    [InlineData(
+    [TestCase(
         "getPullRequest",
         "repository,pullRequestId,workspace",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
         "getPullRequestDiff",
         "repository,pullRequestId,workspace,mode,paths,contextLines,ignoreWhitespace,maxLinesPerFile,cursor",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
         "getPullRequestComments",
-        "repository,pullRequestId,workspace,pageSize,cursor",
+        "repository,pullRequestId,workspace,unresolvedOnly,pageSize,cursor",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
+        "getPullRequestMergeability",
+        "repository,pullRequestId,workspace",
+        "repository,pullRequestId")]
+    [TestCase(
         "createPullRequest",
         "repository,title,sourceBranch,workspace,destinationBranch,description,reviewers,closeSourceBranch,draft",
         "repository,title,sourceBranch")]
-    [InlineData(
+    [TestCase(
         "updatePullRequest",
         "repository,pullRequestId,workspace,title,description,destinationBranch,reviewers,closeSourceBranch,draft",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
         "addPullRequestComment",
         "repository,pullRequestId,content,workspace,parentCommentId,path,line,lineType,startLine,codeSnippet",
         "repository,pullRequestId,content")]
-    [InlineData(
+    [TestCase(
         "setPullRequestReviewStatus",
         "repository,pullRequestId,status,workspace,comment",
         "repository,pullRequestId,status")]
-    [InlineData(
+    [TestCase(
         "mergePullRequest",
         "repository,pullRequestId,workspace,mergeStrategy,message,closeSourceBranch",
         "repository,pullRequestId")]
-    [InlineData(
+    [TestCase(
         "declinePullRequest",
         "repository,pullRequestId,workspace,reason",
         "repository,pullRequestId")]
@@ -128,35 +134,35 @@ public class ToolSchemaTests
     {
         var schema = ToolTestHost.Find(name).ProtocolTool.InputSchema;
 
-        Assert.Equal("object", schema.GetProperty("type").GetString());
+        Assert.That(schema.GetProperty("type").GetString(), Is.EqualTo("object"));
 
         var actualProperties = schema.GetProperty("properties")
             .EnumerateObject()
             .Select(property => property.Name)
             .ToArray();
 
-        Assert.Equal(properties.Split(','), actualProperties);
+        Assert.That(actualProperties, Is.EqualTo(properties.Split(',')));
 
         var actualRequired = schema.TryGetProperty("required", out var requiredElement)
             ? requiredElement.EnumerateArray().Select(item => item.GetString()).ToArray()
             : [];
 
-        Assert.Equal(required.Split(','), actualRequired);
+        Assert.That(actualRequired, Is.EqualTo(required.Split(',')));
     }
 
-    [Fact]
+    [Test]
     public void NoInputSchemaMentionsAnInjectedParameter()
     {
         foreach (var tool in ToolTestHost.Tools)
         {
             foreach (var property in tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject())
             {
-                Assert.DoesNotContain(property.Name, NeverInSchema, StringComparer.OrdinalIgnoreCase);
+                Assert.That(NeverInSchema, Has.No.Member(property.Name).Using((IEqualityComparer<string>) StringComparer.OrdinalIgnoreCase));
             }
         }
     }
 
-    [Fact]
+    [Test]
     public void EveryInputPropertyIsCamelCaseAndDescribed()
     {
         foreach (var tool in ToolTestHost.Tools)
@@ -165,27 +171,25 @@ public class ToolSchemaTests
 
             foreach (var property in tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject())
             {
-                Assert.True(
-                    IsCamelCase(property.Name),
-                    $"{toolName}.{property.Name} is not camelCase.");
+                Assert.That(IsCamelCase(property.Name), Is.True, $"{toolName}.{property.Name} is not camelCase.");
 
                 var described = property.Value.TryGetProperty("description", out var description)
                     && !string.IsNullOrWhiteSpace(description.GetString());
 
-                Assert.True(described, $"{toolName}.{property.Name} has no schema description.");
+                Assert.That(described, Is.True, $"{toolName}.{property.Name} has no schema description.");
             }
         }
     }
 
-    [Fact]
+    [Test]
     public void EveryToolHasAnObjectOutputSchemaInCamelCase()
     {
         foreach (var tool in ToolTestHost.Tools)
         {
             var outputSchema = tool.ProtocolTool.OutputSchema;
 
-            Assert.NotNull(outputSchema);
-            Assert.Equal("object", outputSchema.Value.GetProperty("type").GetString());
+            Assert.That(outputSchema, Is.Not.Null);
+            Assert.That(outputSchema.Value.GetProperty("type").GetString(), Is.EqualTo("object"));
 
             AssertCamelCaseProperties(outputSchema.Value, tool.ProtocolTool.Name);
         }
@@ -195,35 +199,34 @@ public class ToolSchemaTests
     /// The one tool with two shapes: <c>mode</c> chooses, and both payloads have to be describable
     /// by the single output schema the tool advertises.
     /// </summary>
-    [Fact]
+    [Test]
     public void DiffOutputSchemaCarriesBothModes()
     {
         var outputSchema = ToolTestHost.Find("getPullRequestDiff").ProtocolTool.OutputSchema;
 
-        Assert.NotNull(outputSchema);
+        Assert.That(outputSchema, Is.Not.Null);
 
         var properties = outputSchema.Value.GetProperty("properties");
 
-        Assert.True(properties.TryGetProperty("mode", out _));
-        Assert.True(properties.TryGetProperty("diffstat", out _));
-        Assert.True(properties.TryGetProperty("diff", out _));
+        Assert.That(properties.TryGetProperty("mode", out _), Is.True);
+        Assert.That(properties.TryGetProperty("diffstat", out _), Is.True);
+        Assert.That(properties.TryGetProperty("diff", out _), Is.True);
     }
 
     /// <summary>Every paginated result has to hand the caller a way to ask for the next page.</summary>
-    [Theory]
-    [InlineData("listPullRequests", "nextCursor")]
-    [InlineData("getPullRequestComments", "nextCursor")]
-    [InlineData("listDefaultReviewers", "nextCursor")]
-    [InlineData("listPullRequestStatuses", "nextCursor")]
-    [InlineData("listPullRequestTasks", "nextCursor")]
-    [InlineData("listPipelines", "nextCursor")]
-    [InlineData("listCodeInsights", "nextCursor")]
+    [TestCase("listPullRequests", "nextCursor")]
+    [TestCase("getPullRequestComments", "nextCursor")]
+    [TestCase("listDefaultReviewers", "nextCursor")]
+    [TestCase("listPullRequestStatuses", "nextCursor")]
+    [TestCase("listPullRequestTasks", "nextCursor")]
+    [TestCase("listPipelines", "nextCursor")]
+    [TestCase("listCodeInsights", "nextCursor")]
     public void PaginatedOutputSchemasCarryTheCursor(string name, string cursorProperty)
     {
         var outputSchema = ToolTestHost.Find(name).ProtocolTool.OutputSchema;
 
-        Assert.NotNull(outputSchema);
-        Assert.True(outputSchema.Value.GetProperty("properties").TryGetProperty(cursorProperty, out _));
+        Assert.That(outputSchema, Is.Not.Null);
+        Assert.That(outputSchema.Value.GetProperty("properties").TryGetProperty(cursorProperty, out _), Is.True);
     }
 
     private static void AssertCamelCaseProperties(JsonElement schema, string toolName)
@@ -238,9 +241,7 @@ public class ToolSchemaTests
         {
             foreach (var property in properties.EnumerateObject())
             {
-                Assert.True(
-                    IsCamelCase(property.Name),
-                    $"{toolName} output property '{property.Name}' is not camelCase.");
+                Assert.That(IsCamelCase(property.Name), Is.True, $"{toolName} output property '{property.Name}' is not camelCase.");
 
                 AssertCamelCaseProperties(property.Value, toolName);
             }

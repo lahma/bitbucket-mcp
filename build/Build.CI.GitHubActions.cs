@@ -18,7 +18,7 @@ using Fallout.Components;
     OnPullRequestBranches = ["main"],
     ConcurrencyGroup = "${{ github.workflow }}-${{ github.ref }}",
     ConcurrencyCancelInProgress = true,
-    InvokedTargets = [nameof(ITest.Test), nameof(SmokeTest)],
+    InvokedTargets = [nameof(Test), nameof(SmokeTest)],
     PublishArtifacts = false)]
 // .github/workflows/publish.yml is generated from this second attribute (same hard rule 2 - never
 // hand-edit the YAML).
@@ -37,7 +37,7 @@ using Fallout.Components;
     FetchDepth = 0,
     OnPushTags = ["v*.*.*"],
     CacheKeyFiles = [],
-    InvokedTargets = [nameof(ICompile.Compile), nameof(ITest.Test), nameof(Pack), nameof(Publish)],
+    InvokedTargets = [nameof(ICompile.Compile), nameof(Test), nameof(Pack), nameof(Publish)],
     PublishArtifacts = true,
     // The nuget.org profile name that created the trusted publishing policy. Public information and
     // deliberately not a secret - it goes verbatim into the token-exchange request body, and a

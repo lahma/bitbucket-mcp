@@ -7,7 +7,6 @@ using Bitbucket.Mcp.Authentication;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Authentication;
 
@@ -25,26 +24,26 @@ public sealed class LoopbackCallbackListenerTests
 {
     private const string ExpectedState = "state-9f2b7c41";
 
-    [Fact]
+    [Test]
     public async Task CallbackWithTheExpectedStateCompletesTheFlow()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, body) = await AuthTestSupport.GetAsync(
                 CallbackUrl(port, $"code=the-authorization-code&state={ExpectedState}"),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.OK, status);
-            Assert.Contains("Authorization complete", body, StringComparison.Ordinal);
+            Assert.That(status, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body, Does.Contain("Authorization complete"));
 
             var result = await wait;
 
-            Assert.Equal("the-authorization-code", result.Code);
-            Assert.Null(result.Error);
+            Assert.That(result.Code, Is.EqualTo("the-authorization-code"));
+            Assert.That(result.Error, Is.Null);
         }
     }
 
@@ -52,112 +51,112 @@ public sealed class LoopbackCallbackListenerTests
     /// A mismatched <c>state</c> is rejected without ending the sign-in, so the browser's real
     /// callback still lands afterwards.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task StateMismatchIsRejectedAndTheRealCallbackStillSucceeds()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, _) = await AuthTestSupport.GetAsync(
                 CallbackUrl(port, "code=forged&state=not-the-expected-state"),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.BadRequest, status);
-            Assert.False(wait.IsCompleted, "A forged state must not end the sign-in.");
+            Assert.That(status, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(wait.IsCompleted, Is.False, "A forged state must not end the sign-in.");
 
             var (goodStatus, _) = await AuthTestSupport.GetAsync(
                 CallbackUrl(port, $"code=the-real-code&state={ExpectedState}"),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.OK, goodStatus);
+            Assert.That(goodStatus, Is.EqualTo(HttpStatusCode.OK));
 
             var result = await wait;
 
-            Assert.Equal("the-real-code", result.Code);
+            Assert.That(result.Code, Is.EqualTo("the-real-code"));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task AuthorizationServerErrorIsSurfacedToTheCaller()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, body) = await AuthTestSupport.GetAsync(
                 CallbackUrl(port, $"error=access_denied&error_description=The+user+said+no&state={ExpectedState}"),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.BadRequest, status);
-            Assert.Contains("The user said no", body, StringComparison.Ordinal);
+            Assert.That(status, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(body, Does.Contain("The user said no"));
 
             var result = await wait;
 
-            Assert.Null(result.Code);
-            Assert.Equal("access_denied", result.Error);
-            Assert.Equal("The user said no", result.ErrorDescription);
+            Assert.That(result.Code, Is.Null);
+            Assert.That(result.Error, Is.EqualTo("access_denied"));
+            Assert.That(result.ErrorDescription, Is.EqualTo("The user said no"));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task CallbackCarryingNeitherCodeNorErrorIsRejectedAndIgnored()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, _) = await AuthTestSupport.GetAsync(
                 CallbackUrl(port, $"state={ExpectedState}"),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.BadRequest, status);
-            Assert.False(wait.IsCompleted);
+            Assert.That(status, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(wait.IsCompleted, Is.False);
 
             await CompleteAndAssertAsync(port, wait);
         }
     }
 
     /// <summary>Browsers ask for <c>/favicon.ico</c>; that is not the callback and must not end it.</summary>
-    [Fact]
+    [Test]
     public async Task RequestToAnotherPathIsAnsweredWithNotFoundAndIgnored()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, _) = await AuthTestSupport.GetAsync(
                 $"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}/favicon.ico",
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.NotFound, status);
-            Assert.False(wait.IsCompleted);
+            Assert.That(status, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(wait.IsCompleted, Is.False);
 
             await CompleteAndAssertAsync(port, wait);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task ConnectionThatIsNotHttpIsDroppedSilentlyAndIgnored()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
-            var response = await SendRawAsync(port, " not http at all\r\n\r\n", TestContext.Current.CancellationToken);
+            var response = await SendRawAsync(port, " not http at all\r\n\r\n", TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(string.Empty, response);
-            Assert.False(wait.IsCompleted);
+            Assert.That(response, Is.EqualTo(string.Empty));
+            Assert.That(wait.IsCompleted, Is.False);
 
             await CompleteAndAssertAsync(port, wait);
         }
@@ -167,52 +166,52 @@ public sealed class LoopbackCallbackListenerTests
     /// Only a GET can be the callback. Anything else is answered with nothing at all, so a local
     /// process cannot use the port as an echo service.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PostIsDroppedSilentlyAndIgnored()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var response = await SendRawAsync(
                 port,
                 $"POST /callback?code=posted&state={ExpectedState} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n",
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(string.Empty, response);
-            Assert.False(wait.IsCompleted);
+            Assert.That(response, Is.EqualTo(string.Empty));
+            Assert.That(wait.IsCompleted, Is.False);
 
             await CompleteAndAssertAsync(port, wait);
         }
     }
 
     /// <summary>A request head larger than the 8 KiB cap is abandoned rather than buffered.</summary>
-    [Fact]
+    [Test]
     public async Task OversizedRequestHeadIsAbandonedAndIgnored()
     {
         var (listener, port) = AuthTestSupport.StartListener();
 
         using (listener)
         {
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var padding = new string('x', 9 * 1024);
 
             var response = await SendRawAsync(
                 port,
                 $"GET /callback?code=huge&state={ExpectedState}&padding={padding} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(string.Empty, response);
-            Assert.False(wait.IsCompleted);
+            Assert.That(response, Is.EqualTo(string.Empty));
+            Assert.That(wait.IsCompleted, Is.False);
 
             await CompleteAndAssertAsync(port, wait);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task CancellationUnblocksTheWait()
     {
         var (listener, _) = AuthTestSupport.StartListener();
@@ -225,11 +224,11 @@ public sealed class LoopbackCallbackListenerTests
 
             await cancellation.CancelAsync();
 
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
+            await Assert.CatchAsync<OperationCanceledException>(() => wait);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task WaitingBeforeStartingIsARefusal()
     {
         using var listener = new LoopbackCallbackListener(
@@ -237,19 +236,17 @@ public sealed class LoopbackCallbackListenerTests
             LoopbackCallbackListener.DefaultCallbackPath,
             NullLogger.Instance);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken));
     }
 
-    [Fact]
+    [Test]
     public async Task DisposedListenerRefusesToWait()
     {
         var (listener, _) = AuthTestSupport.StartListener();
 
         listener.Dispose();
 
-        await Assert.ThrowsAsync<ObjectDisposedException>(
-            () => listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken));
     }
 
     /// <summary>
@@ -258,7 +255,7 @@ public sealed class LoopbackCallbackListenerTests
     /// resolves to IPv6 first (risk R3). Where the second bind succeeded, the flow must complete
     /// over it too.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task CallbackArrivingOnIpv6LoopbackAlsoCompletesTheFlow()
     {
         var (listener, port) = AuthTestSupport.StartListener();
@@ -267,22 +264,22 @@ public sealed class LoopbackCallbackListenerTests
         {
             if (!listener.IsListeningOnIPv6)
             {
-                Assert.Skip("This host has no IPv6 loopback; the IPv4 socket carries the flow.");
+                Assert.Ignore("This host has no IPv6 loopback; the IPv4 socket carries the flow.");
                 return;
             }
 
-            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.Current.CancellationToken);
+            var wait = listener.WaitForCallbackAsync(ExpectedState, TestContext.CurrentContext.CancellationToken);
 
             var (status, _) = await AuthTestSupport.GetAsync(
                 $"http://[::1]:{port.ToString(CultureInfo.InvariantCulture)}{LoopbackCallbackListener.DefaultCallbackPath}"
                     + $"?code=ipv6-code&state={ExpectedState}",
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.OK, status);
+            Assert.That(status, Is.EqualTo(HttpStatusCode.OK));
 
             var result = await wait;
 
-            Assert.Equal("ipv6-code", result.Code);
+            Assert.That(result.Code, Is.EqualTo("ipv6-code"));
         }
     }
 
@@ -294,13 +291,13 @@ public sealed class LoopbackCallbackListenerTests
     {
         var (status, _) = await AuthTestSupport.GetAsync(
             CallbackUrl(port, $"code=the-real-code&state={ExpectedState}"),
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.That(status, Is.EqualTo(HttpStatusCode.OK));
 
         var result = await wait;
 
-        Assert.Equal("the-real-code", result.Code);
+        Assert.That(result.Code, Is.EqualTo("the-real-code"));
     }
 
     /// <summary>

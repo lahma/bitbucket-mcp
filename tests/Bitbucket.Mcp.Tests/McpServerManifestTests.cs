@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Xml.Linq;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests;
 
@@ -33,7 +32,7 @@ public class McpServerManifestTests
     private const string ChangelogPath = "CHANGELOG.md";
     private const string ServerProjectPath = "src/Bitbucket.Mcp/Bitbucket.Mcp.csproj";
 
-    [Fact]
+    [Test]
     public void ManifestVersionMatchesTheChangelog()
     {
         var root = FindRepositoryRoot();
@@ -42,11 +41,11 @@ public class McpServerManifestTests
         using var manifest = ReadManifest(root);
         var package = SingleNuGetPackage(manifest);
 
-        Assert.Equal(changelogVersion, manifest.RootElement.GetProperty("version").GetString());
-        Assert.Equal(changelogVersion, package.GetProperty("version").GetString());
+        Assert.That(manifest.RootElement.GetProperty("version").GetString(), Is.EqualTo(changelogVersion));
+        Assert.That(package.GetProperty("version").GetString(), Is.EqualTo(changelogVersion));
     }
 
-    [Fact]
+    [Test]
     public void ManifestIdentifierMatchesThePackagedId()
     {
         var root = FindRepositoryRoot();
@@ -57,10 +56,10 @@ public class McpServerManifestTests
             .Select(x => x.Value)
             .SingleOrDefault();
 
-        Assert.False(string.IsNullOrWhiteSpace(packageId), $"{ServerProjectPath} declares no <PackageId>.");
+        Assert.That(string.IsNullOrWhiteSpace(packageId), Is.False, $"{ServerProjectPath} declares no <PackageId>.");
 
         using var manifest = ReadManifest(root);
-        Assert.Equal(packageId, SingleNuGetPackage(manifest).GetProperty("identifier").GetString());
+        Assert.That(SingleNuGetPackage(manifest).GetProperty("identifier").GetString(), Is.EqualTo(packageId));
     }
 
     /// <summary>
@@ -68,7 +67,7 @@ public class McpServerManifestTests
     /// <c>nuget</c>, and the server speaks stdio only — a second entry or a different transport
     /// would silently change what clients are told to run.
     /// </summary>
-    [Fact]
+    [Test]
     public void ManifestDeclaresExactlyOneStdioNuGetPackage()
     {
         var root = FindRepositoryRoot();
@@ -76,8 +75,44 @@ public class McpServerManifestTests
 
         var package = SingleNuGetPackage(manifest);
 
-        Assert.Equal("stdio", package.GetProperty("transport").GetProperty("type").GetString());
-        Assert.Equal("io.github.lahma/bitbucket-mcp", manifest.RootElement.GetProperty("name").GetString());
+        Assert.That(package.GetProperty("transport").GetProperty("type").GetString(), Is.EqualTo("stdio"));
+        Assert.That(manifest.RootElement.GetProperty("name").GetString(), Is.EqualTo("io.github.lahma/bitbucket-mcp"));
+    }
+
+    /// <summary>
+    /// The shape the official MCP Registry accepts. Nothing publishes there yet, but the registry
+    /// proves ownership against the README packed into the nupkg of the exact version being listed,
+    /// so a version shipped without these can never be listed later.
+    /// </summary>
+    [Test]
+    public void ManifestIsOneTheMcpRegistryAccepts()
+    {
+        var root = FindRepositoryRoot();
+        using var manifest = ReadManifest(root);
+
+        Assert.That(
+            manifest.RootElement.GetProperty("$schema").GetString(),
+            Is.EqualTo("https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"));
+
+        // The schema's maxLength; a longer description is rejected outright.
+        Assert.That(manifest.RootElement.GetProperty("description").GetString(), Has.Length.LessThanOrEqualTo(100));
+
+        // Exactly the NuGet service index, or the registry refuses the package entry.
+        Assert.That(
+            SingleNuGetPackage(manifest).GetProperty("registryBaseUrl").GetString(),
+            Is.EqualTo("https://api.nuget.org/v3/index.json"));
+    }
+
+    /// <summary>The ownership marker the registry looks for in the packaged README.</summary>
+    [Test]
+    public void ReadmeCarriesTheRegistryOwnershipMarker()
+    {
+        var root = FindRepositoryRoot();
+        using var manifest = ReadManifest(root);
+
+        var name = manifest.RootElement.GetProperty("name").GetString();
+
+        Assert.That(File.ReadAllText(Path.Combine(root, "README.md")), Does.Contain($"mcp-name: {name}"));
     }
 
     private static JsonElement SingleNuGetPackage(JsonDocument manifest)
@@ -87,7 +122,7 @@ public class McpServerManifestTests
             .Where(x => x.GetProperty("registryType").GetString() == "nuget")
             .ToList();
 
-        Assert.Single(packages);
+        Assert.That(packages, Has.Exactly(1).Items);
         return packages[0];
     }
 
@@ -102,7 +137,7 @@ public class McpServerManifestTests
     {
         var first = File.ReadLines(Path.Combine(root, ChangelogPath)).First().Trim();
 
-        Assert.StartsWith("# ", first, StringComparison.Ordinal);
+        Assert.That(first, Does.StartWith("# "));
         return first[2..].Trim();
     }
 

@@ -6,7 +6,6 @@ using Bitbucket.Mcp.Http;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -25,22 +24,22 @@ public class RetryHandlerTests
     private static readonly Uri RequestUri = new("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests");
 
     /// <summary>Statuses Bitbucket recovers from on its own if asked again.</summary>
-    public static TheoryData<int> RetryableStatuses => new()
-    {
+    public static int[] RetryableStatuses =>
+    [
         408, // request timeout
         429, // rate limited
         502,
         503,
         504,
-    };
+    ];
 
     /// <summary>
     /// Statuses that are the server's real answer. 500 is deliberately here: an unhandled
     /// exception on Bitbucket's side repeats, and 555 is Bitbucket's "diff too large", which is a
     /// property of the pull request.
     /// </summary>
-    public static TheoryData<int> NonRetryableStatuses => new()
-    {
+    public static int[] NonRetryableStatuses =>
+    [
         400,
         401,
         403,
@@ -49,10 +48,9 @@ public class RetryHandlerTests
         422,
         500,
         555,
-    };
+    ];
 
-    [Theory]
-    [MemberData(nameof(RetryableStatuses))]
+    [TestCaseSource(nameof(RetryableStatuses))]
     public async Task RetriesTransientStatuses(int status)
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -64,15 +62,14 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(2, stub.Requests.Count);
-            Assert.Equal(1, attempts.Value);
-            Assert.Single(time.Delays);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(2));
+            Assert.That(attempts.Value, Is.EqualTo(1));
+            Assert.That(time.Delays, Has.Exactly(1).Items);
         }
     }
 
-    [Theory]
-    [MemberData(nameof(NonRetryableStatuses))]
+    [TestCaseSource(nameof(NonRetryableStatuses))]
     public async Task DoesNotRetryDeterministicStatuses(int status)
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -83,14 +80,14 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(status, (int) response.StatusCode);
-            Assert.Single(stub.Requests);
-            Assert.Equal(0, attempts.Value);
-            Assert.Empty(time.Delays);
+            Assert.That((int) response.StatusCode, Is.EqualTo(status));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
+            Assert.That(attempts.Value, Is.EqualTo(0));
+            Assert.That(time.Delays, Is.Empty);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task StopsAfterMaxAttemptsAndReportsTheRetriesItSpent()
     {
         var (client, stub, _, attempts) = CreateClient();
@@ -101,13 +98,13 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-            Assert.Equal(RetryHandler.MaxAttempts, stub.Requests.Count);
-            Assert.Equal(RetryHandler.MaxAttempts - 1, attempts.Value);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(stub.Requests.Count, Is.EqualTo(RetryHandler.MaxAttempts));
+            Assert.That(attempts.Value, Is.EqualTo(RetryHandler.MaxAttempts - 1));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task HonoursRetryAfterDeltaSeconds()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -119,15 +116,15 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
             // Exactly the header value, not the backoff schedule: Bitbucket knows when its window
             // resets and we do not.
-            Assert.Equal(TimeSpan.FromSeconds(7), Assert.Single(time.Delays));
+            Assert.That(Expect.Single(time.Delays), Is.EqualTo(TimeSpan.FromSeconds(7)));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task HonoursRetryAfterAsAnHttpDate()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -144,12 +141,12 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(TimeSpan.FromSeconds(9), Assert.Single(time.Delays));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(Expect.Single(time.Delays), Is.EqualTo(TimeSpan.FromSeconds(9)));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task TreatsARetryAfterDateInThePastAsNoWaitAtAll()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -166,15 +163,15 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(2, stub.Requests.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(2));
 
             // Task.Delay short-circuits a zero wait, so no timer is ever created.
-            Assert.Empty(time.Delays);
+            Assert.That(time.Delays, Is.Empty);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task GivesUpImmediatelyWhenRetryAfterExceedsTheCeiling()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -189,14 +186,14 @@ public class RetryHandlerTests
 
             // Returned as-is on purpose: the caller can tell the user how long the rate limit has
             // left, which is more useful than a tool call that blocks for minutes.
-            Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
-            Assert.Single(stub.Requests);
-            Assert.Empty(time.Delays);
-            Assert.Equal(0, attempts.Value);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
+            Assert.That(time.Delays, Is.Empty);
+            Assert.That(attempts.Value, Is.EqualTo(0));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task WaitsForARetryAfterExactlyAtTheCeiling()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -210,12 +207,12 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(RetryHandler.MaxRetryAfter, Assert.Single(time.Delays));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(Expect.Single(time.Delays), Is.EqualTo(RetryHandler.MaxRetryAfter));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task BacksOffExponentiallyWithinTheJitterBand()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -226,10 +223,10 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
 
             var delays = time.Delays;
-            Assert.Equal(RetryHandler.MaxAttempts - 1, delays.Count);
+            Assert.That(delays.Count, Is.EqualTo(RetryHandler.MaxAttempts - 1));
 
             // min(2^n · 500 ms, 20 s) ± 25 %.
             AssertWithinJitter(TimeSpan.FromMilliseconds(500), delays[0]);
@@ -238,7 +235,7 @@ public class RetryHandlerTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task RetriesATransientTransportFailure()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -251,14 +248,14 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts, Body());
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(3, stub.Requests.Count);
-            Assert.Equal(2, attempts.Value);
-            Assert.Equal(2, time.Delays.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(3));
+            Assert.That(attempts.Value, Is.EqualTo(2));
+            Assert.That(time.Delays.Count, Is.EqualTo(2));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task PropagatesATransportFailureThatOutlivesTheRetryBudget()
     {
         var (client, stub, _, attempts) = CreateClient();
@@ -269,11 +266,11 @@ public class RetryHandlerTests
 
             await Assert.ThrowsAsync<HttpRequestException>(() => SendAsync(client, attempts, Body()));
 
-            Assert.Equal(RetryHandler.MaxAttempts, stub.Requests.Count);
+            Assert.That(stub.Requests.Count, Is.EqualTo(RetryHandler.MaxAttempts));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task NeverRetriesARequestWhoseBodyCannotBeSentAgain()
     {
         var (client, stub, time, attempts) = CreateClient();
@@ -286,13 +283,13 @@ public class RetryHandlerTests
             using var response = await SendAsync(client, attempts, content);
 
             // The first attempt drained the stream; reissuing would send an empty body.
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-            Assert.Single(stub.Requests);
-            Assert.Empty(time.Delays);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
+            Assert.That(time.Delays, Is.Empty);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task NeverRetriesATransportFailureForAnUnsendableBody()
     {
         var (client, stub, _, attempts) = CreateClient();
@@ -305,11 +302,11 @@ public class RetryHandlerTests
 
             await Assert.ThrowsAsync<HttpRequestException>(() => SendAsync(client, attempts, content));
 
-            Assert.Single(stub.Requests);
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task WorksWithoutAnAttemptCounterAttached()
     {
         var (client, stub, _, _) = CreateClient();
@@ -320,41 +317,41 @@ public class RetryHandlerTests
             stub.EnqueueJson("""{"ok":true}""");
 
             using var request = new HttpRequestMessage(HttpMethod.Get, RequestUri);
-            using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+            using var response = await client.SendAsync(request, TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(2, stub.Requests.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(2));
         }
     }
 
-    [Fact]
+    [Test]
     public void KnowsWhichBodiesCanBeSentAgain()
     {
-        Assert.True(RetryHandler.IsResendable(null));
+        Assert.That(RetryHandler.IsResendable(null), Is.True);
 
         using var bytes = new ByteArrayContent("{}"u8.ToArray());
-        Assert.True(RetryHandler.IsResendable(bytes));
+        Assert.That(RetryHandler.IsResendable(bytes), Is.True);
 
         using var memory = new ReadOnlyMemoryContent("{}"u8.ToArray());
-        Assert.True(RetryHandler.IsResendable(memory));
+        Assert.That(RetryHandler.IsResendable(memory), Is.True);
 
         // StringContent derives from ByteArrayContent, so it is buffered and replayable.
         using var text = new StringContent("{}", Encoding.UTF8, "application/json");
-        Assert.True(RetryHandler.IsResendable(text));
+        Assert.That(RetryHandler.IsResendable(text), Is.True);
 
         using var stream = new StreamContent(new MemoryStream());
-        Assert.False(RetryHandler.IsResendable(stream));
+        Assert.That(RetryHandler.IsResendable(stream), Is.False);
     }
 
-    [Fact]
+    [Test]
     public void ExposesTheDocumentedRetryBudget()
     {
-        Assert.Equal(4, RetryHandler.MaxAttempts);
-        Assert.Equal(TimeSpan.FromSeconds(60), RetryHandler.MaxRetryAfter);
-        Assert.Equal(50, RetryHandler.LowRateLimitRemaining);
+        Assert.That(RetryHandler.MaxAttempts, Is.EqualTo(4));
+        Assert.That(RetryHandler.MaxRetryAfter, Is.EqualTo(TimeSpan.FromSeconds(60)));
+        Assert.That(RetryHandler.LowRateLimitRemaining, Is.EqualTo(50));
     }
 
-    [Fact]
+    [Test]
     public async Task ToleratesRateLimitHeadersOnEveryResponse()
     {
         var (client, stub, _, attempts) = CreateClient();
@@ -378,13 +375,13 @@ public class RetryHandlerTests
 
             using var response = await SendAsync(client, attempts);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         }
     }
 
     private static void AssertWithinJitter(TimeSpan expected, TimeSpan actual)
     {
-        Assert.InRange(actual, expected * 0.75, expected * 1.25);
+        Assert.That(actual, Is.InRange(expected * 0.75, expected * 1.25));
     }
 
     private static ByteArrayContent Body() => new("{}"u8.ToArray());
@@ -401,7 +398,7 @@ public class RetryHandlerTests
 
         request.Options.Set(RetryHandler.RetryAttemptsKey, attempts);
 
-        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+        return await client.SendAsync(request, TestContext.CurrentContext.CancellationToken);
     }
 
     private static HttpResponseMessage WithRetryAfter(HttpStatusCode status, string value)

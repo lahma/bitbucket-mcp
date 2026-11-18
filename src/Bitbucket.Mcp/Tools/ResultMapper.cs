@@ -266,22 +266,38 @@ internal static partial class ResultMapper
         _ => "modified",
     };
 
-    /// <summary>Maps one page of comments, dropping deleted ones.</summary>
+    /// <summary>Maps one page of comments, dropping deleted ones and, on request, resolved threads.</summary>
     /// <remarks>
+    /// <para>
     /// Bitbucket returns deleted comments with their content blanked so a thread keeps its shape.
     /// Rendering them would mean showing the model empty comments it cannot act on, so they are
     /// filtered out here — the one place that decision has to be made.
+    /// </para>
+    /// <para>
+    /// Only a thread's top-level comment carries its resolution, so <paramref name="unresolvedOnly"/>
+    /// drops a resolved top-level comment and then every reply whose parent was dropped. Bitbucket
+    /// lists oldest first, so a parent precedes its replies; a reply whose parent is on an earlier
+    /// page cannot be placed and is kept.
+    /// </para>
     /// </remarks>
-    internal static CommentListResult Comments(Page<CommentDto> page)
+    internal static CommentListResult Comments(Page<CommentDto> page, bool unresolvedOnly = false)
     {
         ArgumentNullException.ThrowIfNull(page);
 
         var comments = new List<CommentSummary>(page.Items.Count);
+        var resolvedThreads = new HashSet<long>();
 
         foreach (var comment in page.Items)
         {
             if (comment.Deleted == true)
             {
+                continue;
+            }
+
+            if (unresolvedOnly && comment.Id is { } commentId &&
+                (comment.Resolution is not null || (comment.Parent?.Id is { } parent && resolvedThreads.Contains(parent))))
+            {
+                resolvedThreads.Add(commentId);
                 continue;
             }
 
@@ -386,6 +402,63 @@ internal static partial class ResultMapper
     }
 
     /// <summary>Maps one task.</summary>
+    /// <summary>
+    /// Flattens Bitbucket's mergeability checks into one shape, blocking checks first. A check
+    /// Bitbucket could not evaluate (<c>UNKNOWN</c>) keeps <c>mergeable</c> false: its absence of a
+    /// verdict is not a pass.
+    /// </summary>
+    internal static PullRequestMergeabilityResult Mergeability(MergeabilityChecksDto dto)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var checks = new List<MergeabilityCheck>(dto.Values?.Count ?? 0);
+
+        foreach (var check in dto.Values ?? [])
+        {
+            checks.Add(new MergeabilityCheck
+            {
+                Type = check.Type,
+                Name = check.Check?.Kind ?? check.Check?.Name,
+                Status = check.Status,
+                Blocking = check.Blocking == true,
+                Detail = MergeabilityDetail(check),
+            });
+        }
+
+        return new PullRequestMergeabilityResult
+        {
+            Mergeable = checks.TrueForAll(static check => !check.Blocking && check.Status != "UNKNOWN"),
+
+            // OrderBy is stable, so Bitbucket's order survives within each group.
+            Checks = [.. checks.OrderBy(static check => check.Blocking ? 0 : 1)],
+        };
+    }
+
+    private static string? MergeabilityDetail(MergeabilityCheckDto check)
+    {
+        if (check.Requirement is { } requirement && check.Observed is { } observed)
+        {
+            return $"requires {requirement.GetRawText()}, observed {observed.GetRawText()}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(check.Reason))
+        {
+            return check.Reason;
+        }
+
+        if (!string.IsNullOrWhiteSpace(check.Message))
+        {
+            return check.Message;
+        }
+
+        if (check.Queued is { } queued)
+        {
+            return queued ? "already queued" : "not queued";
+        }
+
+        return string.IsNullOrWhiteSpace(check.State) ? null : $"pull request is {check.State}";
+    }
+
     internal static PullRequestTask Task(TaskDto dto)
     {
         ArgumentNullException.ThrowIfNull(dto);

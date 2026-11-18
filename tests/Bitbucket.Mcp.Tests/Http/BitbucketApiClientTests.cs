@@ -7,7 +7,6 @@ using Bitbucket.Mcp.Http.Models;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -44,20 +43,20 @@ public class BitbucketApiClientTests
     private static readonly string[] TitleFieldErrors = ["This field is required."];
 
     /// <summary>Page sizes and the <c>pagelen</c> they must be clamped to.</summary>
-    public static TheoryData<int, string> PageSizes => new()
-    {
-        { -5, "1" },
-        { 0, "1" },
-        { 1, "1" },
-        { 50, "50" },
-        { 100, "100" },
-        { 101, "100" },
-        { 5000, "100" },
-    };
+    public static object[][] PageSizes =>
+    [
+        [-5, "1"],
+        [0, "1"],
+        [1, "1"],
+        [50, "50"],
+        [100, "100"],
+        [101, "100"],
+        [5000, "100"],
+    ];
 
     // ---------------------------------------------------------------- listing
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsAsksForTheListFieldSetAndNothingElse()
     {
         using var stub = new StubHttpMessageHandler();
@@ -68,25 +67,24 @@ public class BitbucketApiClientTests
         _ = await client.ListPullRequestsAsync(
             Workspace,
             Repository,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Get, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests", RequestUrl.Path(request.Uri));
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests"));
 
         // Exactly the constant, so a field set edited without editing FieldSets shows up here.
-        Assert.Equal(FieldSets.PullRequestList, RequestUrl.QueryValue(request.Uri, "fields"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestList));
 
         // Unset filters are absent rather than empty: "" is a different request to Bitbucket.
-        Assert.Equal("fields", Assert.Single(RequestUrl.Query(request.Uri)).Key);
+        Assert.That(Expect.Single(RequestUrl.Query(request.Uri)).Key, Is.EqualTo("fields"));
 
         // Commas are escaped on the wire even though the decoded value reads as a plain list.
-        Assert.Contains("%2C", RequestUrl.PathAndQuery(request.Uri), StringComparison.Ordinal);
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Does.Contain("%2C"));
     }
 
-    [Theory]
-    [MemberData(nameof(PageSizes))]
+    [TestCaseSource(nameof(PageSizes))]
     public async Task ListPullRequestsClampsPageSizeToBitbucketsCeiling(int pageSize, string expected)
     {
         using var stub = new StubHttpMessageHandler();
@@ -98,17 +96,16 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             pageSize: pageSize,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(expected, RequestUrl.QueryValue(Assert.Single(stub.Requests).Uri, "pagelen"));
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "pagelen"), Is.EqualTo(expected));
     }
 
-    [Theory]
-    [InlineData(new[] { "OPEN" }, "state = \"OPEN\"")]
-    [InlineData(new[] { "open" }, "state = \"OPEN\"")]
-    [InlineData(new[] { "OPEN", "MERGED" }, "(state = \"OPEN\" OR state = \"MERGED\")")]
-    [InlineData(new[] { "OPEN", "MERGED", "DECLINED" }, "(state = \"OPEN\" OR state = \"MERGED\" OR state = \"DECLINED\")")]
-    [InlineData(new[] { "OPEN", "  " }, "state = \"OPEN\"")]
+    [TestCase(new[] { "OPEN" }, "state = \"OPEN\"")]
+    [TestCase(new[] { "open" }, "state = \"OPEN\"")]
+    [TestCase(new[] { "OPEN", "MERGED" }, "(state = \"OPEN\" OR state = \"MERGED\")")]
+    [TestCase(new[] { "OPEN", "MERGED", "DECLINED" }, "(state = \"OPEN\" OR state = \"MERGED\" OR state = \"DECLINED\")")]
+    [TestCase(new[] { "OPEN", "  " }, "state = \"OPEN\"")]
     public async Task ListPullRequestsComposesStateClauses(string[] states, string expected)
     {
         using var stub = new StubHttpMessageHandler();
@@ -120,15 +117,14 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             states: states,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(expected, RequestUrl.QueryValue(Assert.Single(stub.Requests).Uri, "q"));
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.EqualTo(expected));
     }
 
-    [Theory]
-    [InlineData("{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}", "author.uuid = \"{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}\"")]
-    [InlineData("jane", "author.nickname = \"jane\"")]
-    [InlineData("  jane  ", "author.nickname = \"jane\"")]
+    [TestCase("{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}", "author.uuid = \"{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}\"")]
+    [TestCase("jane", "author.nickname = \"jane\"")]
+    [TestCase("  jane  ", "author.nickname = \"jane\"")]
     public async Task ListPullRequestsMatchesAuthorsByUuidOrNickname(string author, string expected)
     {
         using var stub = new StubHttpMessageHandler();
@@ -140,12 +136,12 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             author: author,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(expected, RequestUrl.QueryValue(Assert.Single(stub.Requests).Uri, "q"));
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.EqualTo(expected));
     }
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsQuotesAndEscapesAuthorValues()
     {
         using var stub = new StubHttpMessageHandler();
@@ -157,16 +153,14 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             author: "ja\"ne\\x",
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         // BBQL string literals are double-quoted; a quote or a backslash in the value has to be
         // escaped or the filter parses as something else entirely.
-        Assert.Equal(
-            "author.nickname = \"ja\\\"ne\\\\x\"",
-            RequestUrl.QueryValue(Assert.Single(stub.Requests).Uri, "q"));
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.EqualTo("author.nickname = \"ja\\\"ne\\\\x\""));
     }
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsParenthesisesTheCallerQueryAndAndsEveryClause()
     {
         using var stub = new StubHttpMessageHandler();
@@ -181,21 +175,19 @@ public class BitbucketApiClientTests
             author: "jane",
             query: "title ~ \"retry\" OR reviewers.nickname = \"ada\"",
             sort: "-updated_on",
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
         // The caller's fragment is wrapped so its OR cannot rearrange the state and author
         // clauses it is ANDed with.
-        Assert.Equal(
-            "(state = \"OPEN\" OR state = \"MERGED\") AND author.nickname = \"jane\" "
-            + "AND (title ~ \"retry\" OR reviewers.nickname = \"ada\")",
-            RequestUrl.QueryValue(request.Uri, "q"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "q"), Is.EqualTo("(state = \"OPEN\" OR state = \"MERGED\") AND author.nickname = \"jane\" "
+            + "AND (title ~ \"retry\" OR reviewers.nickname = \"ada\")"));
 
-        Assert.Equal("-updated_on", RequestUrl.QueryValue(request.Uri, "sort"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "sort"), Is.EqualTo("-updated_on"));
     }
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsOmitsTheQueryWhenNoFilterIsGiven()
     {
         using var stub = new StubHttpMessageHandler();
@@ -209,12 +201,12 @@ public class BitbucketApiClientTests
             states: [],
             author: "   ",
             query: "",
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Null(RequestUrl.QueryValue(Assert.Single(stub.Requests).Uri, "q"));
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.Null);
     }
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsMapsTheFixturePage()
     {
         using var stub = new StubHttpMessageHandler();
@@ -225,54 +217,50 @@ public class BitbucketApiClientTests
         var page = await client.ListPullRequestsAsync(
             Workspace,
             Repository,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(47, page.TotalSize);
-        Assert.Equal(3, page.Items.Count);
+        Assert.That(page.TotalSize, Is.EqualTo(47));
+        Assert.That(page.Items.Count, Is.EqualTo(3));
 
-        Assert.NotNull(page.NextCursor);
-        Assert.True(BitbucketCursor.TryDecode(page.NextCursor, out var next));
-        Assert.Equal(
-            "https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests?fields=next%2Csize%2Cvalues.id&page=2&pagelen=3",
-            next);
+        Assert.That(page.NextCursor, Is.Not.Null);
+        Assert.That(BitbucketCursor.TryDecode(page.NextCursor, out var next), Is.True);
+        Assert.That(next, Is.EqualTo("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests?fields=next%2Csize%2Cvalues.id&page=2&pagelen=3"));
 
         var first = page.Items[0];
-        Assert.Equal(412, first.Id);
-        Assert.Equal("Add retry handler for 429 responses", first.Title);
-        Assert.Equal("OPEN", first.State);
-        Assert.False(first.Draft);
-        Assert.Equal(7, first.CommentCount);
-        Assert.Equal(1, first.TaskCount);
-        Assert.True(first.CloseSourceBranch);
-        Assert.Equal(
-            DateTimeOffset.Parse("2026-07-14T09:12:33.415882+00:00", CultureInfo.InvariantCulture),
-            first.CreatedOn);
-        Assert.Equal("Jane Doe", first.Author?.DisplayName);
-        Assert.Equal("{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}", first.Author?.Uuid);
-        Assert.Equal("jane", first.Author?.Nickname);
-        Assert.Equal("feature/retry-handler", first.Source?.Branch?.Name);
-        Assert.Equal("a1b2c3d4e5f6", first.Source?.Commit?.Hash);
-        Assert.Equal("acme/widget-api", first.Source?.Repository?.FullName);
-        Assert.Equal("main", first.Destination?.Branch?.Name);
+        Assert.That(first.Id, Is.EqualTo(412));
+        Assert.That(first.Title, Is.EqualTo("Add retry handler for 429 responses"));
+        Assert.That(first.State, Is.EqualTo("OPEN"));
+        Assert.That(first.Draft, Is.False);
+        Assert.That(first.CommentCount, Is.EqualTo(7));
+        Assert.That(first.TaskCount, Is.EqualTo(1));
+        Assert.That(first.CloseSourceBranch, Is.True);
+        Assert.That(first.CreatedOn, Is.EqualTo(DateTimeOffset.Parse("2026-07-14T09:12:33.415882+00:00", CultureInfo.InvariantCulture)));
+        Assert.That(first.Author?.DisplayName, Is.EqualTo("Jane Doe"));
+        Assert.That(first.Author?.Uuid, Is.EqualTo("{9e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7}"));
+        Assert.That(first.Author?.Nickname, Is.EqualTo("jane"));
+        Assert.That(first.Source?.Branch?.Name, Is.EqualTo("feature/retry-handler"));
+        Assert.That(first.Source?.Commit?.Hash, Is.EqualTo("a1b2c3d4e5f6"));
+        Assert.That(first.Source?.Repository?.FullName, Is.EqualTo("acme/widget-api"));
+        Assert.That(first.Destination?.Branch?.Name, Is.EqualTo("main"));
 
         var second = page.Items[1];
-        Assert.True(second.Draft);
-        Assert.Null(second.Author?.Nickname);
-        Assert.Equal("sam-fork/widget-api", second.Source?.Repository?.FullName);
+        Assert.That(second.Draft, Is.True);
+        Assert.That(second.Author?.Nickname, Is.Null);
+        Assert.That(second.Source?.Repository?.FullName, Is.EqualTo("sam-fork/widget-api"));
 
         // A fields=-trimmed or genuinely unset value is null, not a default: nothing here may
         // invent a zero or an empty author.
         var third = page.Items[2];
-        Assert.Equal("MERGED", third.State);
-        Assert.Null(third.Author);
-        Assert.Null(third.Draft);
-        Assert.Null(third.CommentCount);
-        Assert.Null(third.CloseSourceBranch);
-        Assert.Null(third.Source?.Commit);
-        Assert.Null(third.Source?.Repository);
+        Assert.That(third.State, Is.EqualTo("MERGED"));
+        Assert.That(third.Author, Is.Null);
+        Assert.That(third.Draft, Is.Null);
+        Assert.That(third.CommentCount, Is.Null);
+        Assert.That(third.CloseSourceBranch, Is.Null);
+        Assert.That(third.Source?.Commit, Is.Null);
+        Assert.That(third.Source?.Repository, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsSurvivesAPageWithoutValues()
     {
         using var stub = new StubHttpMessageHandler();
@@ -283,13 +271,13 @@ public class BitbucketApiClientTests
         var page = await client.ListPullRequestsAsync(
             Workspace,
             Repository,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Empty(page.Items);
-        Assert.Null(page.NextCursor);
+        Assert.That(page.Items, Is.Empty);
+        Assert.That(page.NextCursor, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public async Task ANextLinkOutsideTheApiDoesNotBecomeACursor()
     {
         using var stub = new StubHttpMessageHandler();
@@ -300,16 +288,16 @@ public class BitbucketApiClientTests
         var page = await client.ListPullRequestsAsync(
             Workspace,
             Repository,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         // Pagination stops rather than handing out a cursor that would be refused on the way back
         // in — "no more pages" is the safe direction to fail.
-        Assert.Null(page.NextCursor);
+        Assert.That(page.NextCursor, Is.Null);
     }
 
     // ------------------------------------------------------------ single item
 
-    [Fact]
+    [Test]
     public async Task GetPullRequestAsksForTheDetailFieldSetAndMapsReviewersAndParticipants()
     {
         using var stub = new StubHttpMessageHandler();
@@ -321,40 +309,40 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Get, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.PullRequestDetail, RequestUrl.QueryValue(request.Uri, "fields"));
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
 
-        Assert.Equal(412, pullRequest.Id);
-        Assert.StartsWith("Retries 408/429/502/503/504", pullRequest.Description, StringComparison.Ordinal);
+        Assert.That(pullRequest.Id, Is.EqualTo(412));
+        Assert.That(pullRequest.Description, Does.StartWith("Retries 408/429/502/503/504"));
 
-        Assert.NotNull(pullRequest.Reviewers);
-        Assert.Equal(2, pullRequest.Reviewers.Count);
-        Assert.Equal("{aaaabbbb-cccc-dddd-eeee-ffff00001111}", pullRequest.Reviewers[0].Uuid);
+        Assert.That(pullRequest.Reviewers, Is.Not.Null);
+        Assert.That(pullRequest.Reviewers.Count, Is.EqualTo(2));
+        Assert.That(pullRequest.Reviewers[0].Uuid, Is.EqualTo("{aaaabbbb-cccc-dddd-eeee-ffff00001111}"));
 
-        Assert.NotNull(pullRequest.Participants);
-        Assert.Equal(3, pullRequest.Participants.Count);
+        Assert.That(pullRequest.Participants, Is.Not.Null);
+        Assert.That(pullRequest.Participants.Count, Is.EqualTo(3));
 
-        Assert.True(pullRequest.Participants[0].Approved);
-        Assert.Equal("approved", pullRequest.Participants[0].State);
-        Assert.Equal("REVIEWER", pullRequest.Participants[0].Role);
+        Assert.That(pullRequest.Participants[0].Approved, Is.True);
+        Assert.That(pullRequest.Participants[0].State, Is.EqualTo("approved"));
+        Assert.That(pullRequest.Participants[0].Role, Is.EqualTo("REVIEWER"));
 
         // The only place a change request is visible; note the lower-case wire value.
-        Assert.Equal("changes_requested", pullRequest.Participants[1].State);
-        Assert.False(pullRequest.Participants[1].Approved);
+        Assert.That(pullRequest.Participants[1].State, Is.EqualTo("changes_requested"));
+        Assert.That(pullRequest.Participants[1].Approved, Is.False);
 
-        Assert.Null(pullRequest.Participants[2].State);
-        Assert.Equal("Jane Doe", pullRequest.Participants[2].User?.DisplayName);
+        Assert.That(pullRequest.Participants[2].State, Is.Null);
+        Assert.That(pullRequest.Participants[2].User?.DisplayName, Is.EqualTo("Jane Doe"));
 
-        Assert.Null(pullRequest.MergeCommit);
-        Assert.Null(pullRequest.ClosedBy);
+        Assert.That(pullRequest.MergeCommit, Is.Null);
+        Assert.That(pullRequest.ClosedBy, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public async Task GetPullRequestToleratesAPullRequestWithNoReviewers()
     {
         using var stub = new StubHttpMessageHandler();
@@ -366,18 +354,18 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             500,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
         // Bitbucket omits the arrays entirely rather than sending empty ones.
-        Assert.Null(pullRequest.Reviewers);
-        Assert.Null(pullRequest.Participants);
-        Assert.Null(pullRequest.Description);
-        Assert.Equal("docs/diffstat-first", pullRequest.Source?.Branch?.Name);
+        Assert.That(pullRequest.Reviewers, Is.Null);
+        Assert.That(pullRequest.Participants, Is.Null);
+        Assert.That(pullRequest.Description, Is.Null);
+        Assert.That(pullRequest.Source?.Branch?.Name, Is.EqualTo("docs/diffstat-first"));
     }
 
     // --------------------------------------------------------------- diffstat
 
-    [Fact]
+    [Test]
     public async Task GetDiffStatAsksForTheDiffStatFieldSetAndMapsEveryFileStatus()
     {
         using var stub = new StubHttpMessageHandler();
@@ -390,36 +378,36 @@ public class BitbucketApiClientTests
             Repository,
             412,
             pageSize: 5,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/diffstat", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.DiffStat, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("5", RequestUrl.QueryValue(request.Uri, "pagelen"));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/diffstat"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.DiffStat));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "pagelen"), Is.EqualTo("5"));
 
-        Assert.Equal(12, page.TotalSize);
-        Assert.Equal(5, page.Items.Count);
-        Assert.NotNull(page.NextCursor);
+        Assert.That(page.TotalSize, Is.EqualTo(12));
+        Assert.That(page.Items.Count, Is.EqualTo(5));
+        Assert.That(page.NextCursor, Is.Not.Null);
 
-        Assert.Equal("modified", page.Items[0].Status);
-        Assert.Equal(42, page.Items[0].LinesAdded);
-        Assert.Equal(7, page.Items[0].LinesRemoved);
-        Assert.Equal("src/Bitbucket.Mcp/Http/RetryHandler.cs", page.Items[0].New?.Path);
+        Assert.That(page.Items[0].Status, Is.EqualTo("modified"));
+        Assert.That(page.Items[0].LinesAdded, Is.EqualTo(42));
+        Assert.That(page.Items[0].LinesRemoved, Is.EqualTo(7));
+        Assert.That(page.Items[0].New?.Path, Is.EqualTo("src/Bitbucket.Mcp/Http/RetryHandler.cs"));
 
-        Assert.Null(page.Items[1].Old);
-        Assert.Equal("tests/Bitbucket.Mcp.Tests/Http/RetryHandlerTests.cs", page.Items[1].New?.Path);
+        Assert.That(page.Items[1].Old, Is.Null);
+        Assert.That(page.Items[1].New?.Path, Is.EqualTo("tests/Bitbucket.Mcp.Tests/Http/RetryHandlerTests.cs"));
 
-        Assert.Null(page.Items[2].New);
-        Assert.Equal("src/Bitbucket.Mcp/Http/LegacyBackoff.cs", page.Items[2].Old?.Path);
+        Assert.That(page.Items[2].New, Is.Null);
+        Assert.That(page.Items[2].Old?.Path, Is.EqualTo("src/Bitbucket.Mcp/Http/LegacyBackoff.cs"));
 
-        Assert.Equal("renamed", page.Items[3].Status);
-        Assert.Equal("docs/retry.md", page.Items[3].Old?.Path);
-        Assert.Equal("docs/http/retry.md", page.Items[3].New?.Path);
+        Assert.That(page.Items[3].Status, Is.EqualTo("renamed"));
+        Assert.That(page.Items[3].Old?.Path, Is.EqualTo("docs/retry.md"));
+        Assert.That(page.Items[3].New?.Path, Is.EqualTo("docs/http/retry.md"));
 
         // A binary file reports zero on both sides; the path is what the diff endpoint needs back.
-        Assert.Equal(0, page.Items[4].LinesAdded);
-        Assert.Equal("assets/logo (draft).png", page.Items[4].New?.Path);
+        Assert.That(page.Items[4].LinesAdded, Is.EqualTo(0));
+        Assert.That(page.Items[4].New?.Path, Is.EqualTo("assets/logo (draft).png"));
     }
 
     /// <summary>
@@ -427,7 +415,7 @@ public class BitbucketApiClientTests
     /// <c>302</c> to another path on the same host, and the page only comes back if the redirected
     /// request still carries the credential.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task GetDiffStatFollowsTheRedirectBitbucketAnswersWith()
     {
         using var stub = new StubHttpMessageHandler();
@@ -442,21 +430,19 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(5, page.Items.Count);
-        Assert.Equal(2, stub.Requests.Count);
+        Assert.That(page.Items.Count, Is.EqualTo(5));
+        Assert.That(stub.Requests.Count, Is.EqualTo(2));
 
-        Assert.Equal(
-            "/2.0/repositories/acme/widget-api/pullrequests/412/diffstat-content",
-            RequestUrl.Path(stub.Requests[1].Uri));
+        Assert.That(RequestUrl.Path(stub.Requests[1].Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/diffstat-content"));
 
-        Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
+        Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer token-1"));
     }
 
     // ------------------------------------------------------------------- diff
 
-    [Fact]
+    [Test]
     public async Task GetDiffRepeatsThePathParameterAndAsksForText()
     {
         const string Diff = "diff --git a/src/A.cs b/src/A.cs\n--- a/src/A.cs\n+++ b/src/A.cs\n@@ -1 +1 @@\n-old\n+new\n";
@@ -473,28 +459,28 @@ public class BitbucketApiClientTests
             paths: DiffPaths,
             contextLines: 3,
             ignoreWhitespace: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(Diff, diff);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/diff", RequestUrl.Path(request.Uri));
+        Assert.That(diff, Is.EqualTo(Diff));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/diff"));
 
         // Repeated `path=`, not a comma-separated list — the whole diffstat-first workflow rests
         // on this being one parameter per file.
-        Assert.Equal(DiffPaths, RequestUrl.QueryValues(request.Uri, "path"));
+        Assert.That(RequestUrl.QueryValues(request.Uri, "path"), Is.EqualTo(DiffPaths));
 
-        Assert.Equal("3", RequestUrl.QueryValue(request.Uri, "context"));
-        Assert.Equal("true", RequestUrl.QueryValue(request.Uri, "ignore_whitespace"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "context"), Is.EqualTo("3"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "ignore_whitespace"), Is.EqualTo("true"));
 
         // No `fields=`: this endpoint answers with text, not JSON.
-        Assert.Null(RequestUrl.QueryValue(request.Uri, "fields"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.Null);
 
         // A request-level Accept replaces the client-wide application/json default outright.
-        Assert.Equal("text/plain", request.Headers["Accept"]);
+        Assert.That(request.Headers["Accept"], Is.EqualTo("text/plain"));
     }
 
-    [Fact]
+    [Test]
     public async Task GetDiffSendsNoQueryAtAllForAWholePullRequest()
     {
         using var stub = new StubHttpMessageHandler();
@@ -506,15 +492,15 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/diff", RequestUrl.PathAndQuery(request.Uri));
-        Assert.Empty(RequestUrl.Query(request.Uri));
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/diff"));
+        Assert.That(RequestUrl.Query(request.Uri), Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task GetDiffSendsFalseForIgnoreWhitespaceRatherThanOmittingIt()
     {
         using var stub = new StubHttpMessageHandler();
@@ -528,12 +514,12 @@ public class BitbucketApiClientTests
             412,
             contextLines: 0,
             ignoreWhitespace: false,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal("0", RequestUrl.QueryValue(request.Uri, "context"));
-        Assert.Equal("false", RequestUrl.QueryValue(request.Uri, "ignore_whitespace"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "context"), Is.EqualTo("0"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "ignore_whitespace"), Is.EqualTo("false"));
     }
 
     /// <summary>
@@ -541,7 +527,7 @@ public class BitbucketApiClientTests
     /// Accept header across the redirect — the request the chain issues itself gets none of
     /// <see cref="HttpClient.DefaultRequestHeaders"/> for free.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task GetDiffFollowsTheRedirectAndKeepsItsCredentialAndAcceptHeader()
     {
         const string Diff = "diff --git a/src/A.cs b/src/A.cs\n--- a/src/A.cs\n+++ b/src/A.cs\n@@ -1 +1 @@\n-old\n+new\n";
@@ -558,19 +544,19 @@ public class BitbucketApiClientTests
             Repository,
             412,
             paths: ["src/A.cs"],
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(Diff, diff);
-        Assert.Equal(2, stub.Requests.Count);
+        Assert.That(diff, Is.EqualTo(Diff));
+        Assert.That(stub.Requests.Count, Is.EqualTo(2));
 
-        Assert.Equal(Target, stub.Requests[1].Uri?.AbsoluteUri);
-        Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
-        Assert.Equal("text/plain", stub.Requests[1].Headers["Accept"]);
+        Assert.That(stub.Requests[1].Uri?.AbsoluteUri, Is.EqualTo(Target));
+        Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer token-1"));
+        Assert.That(stub.Requests[1].Headers["Accept"], Is.EqualTo("text/plain"));
     }
 
     // --------------------------------------------------------------- comments
 
-    [Fact]
+    [Test]
     public async Task GetCommentsMapsGeneralInlineResolvedRepliedAndDeletedComments()
     {
         using var stub = new StubHttpMessageHandler();
@@ -583,56 +569,53 @@ public class BitbucketApiClientTests
             Repository,
             412,
             pageSize: 5,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/comments", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.Comments, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("5", RequestUrl.QueryValue(request.Uri, "pagelen"));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Comments));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "pagelen"), Is.EqualTo("5"));
 
-        Assert.Equal(5, page.Items.Count);
-        Assert.NotNull(page.NextCursor);
+        Assert.That(page.Items.Count, Is.EqualTo(5));
+        Assert.That(page.NextCursor, Is.Not.Null);
 
         var general = page.Items[0];
-        Assert.Null(general.Inline);
-        Assert.Null(general.Parent);
-        Assert.False(general.Deleted);
-        Assert.Equal("Ada Byron", general.User?.DisplayName);
+        Assert.That(general.Inline, Is.Null);
+        Assert.That(general.Parent, Is.Null);
+        Assert.That(general.Deleted, Is.False);
+        Assert.That(general.User?.DisplayName, Is.EqualTo("Ada Byron"));
 
         var inline = page.Items[1];
-        Assert.Equal("src/Bitbucket.Mcp/Http/RetryHandler.cs", inline.Inline?.Path);
-        Assert.Equal(75, inline.Inline?.To);
-        Assert.Null(inline.Inline?.From);
+        Assert.That(inline.Inline?.Path, Is.EqualTo("src/Bitbucket.Mcp/Http/RetryHandler.cs"));
+        Assert.That(inline.Inline?.To, Is.EqualTo(75));
+        Assert.That(inline.Inline?.From, Is.Null);
 
         var resolved = page.Items[2];
-        Assert.Equal(118, resolved.Inline?.From);
-        Assert.Equal(112, resolved.Inline?.StartFrom);
-        Assert.Null(resolved.Inline?.To);
-        Assert.Equal("Jane Doe", resolved.Resolution?.User?.DisplayName);
-        Assert.Equal(
-            DateTimeOffset.Parse("2026-07-16T10:05:00+00:00", CultureInfo.InvariantCulture),
-            resolved.Resolution?.CreatedOn);
+        Assert.That(resolved.Inline?.From, Is.EqualTo(118));
+        Assert.That(resolved.Inline?.StartFrom, Is.EqualTo(112));
+        Assert.That(resolved.Inline?.To, Is.Null);
+        Assert.That(resolved.Resolution?.User?.DisplayName, Is.EqualTo("Jane Doe"));
+        Assert.That(resolved.Resolution?.CreatedOn, Is.EqualTo(DateTimeOffset.Parse("2026-07-16T10:05:00+00:00", CultureInfo.InvariantCulture)));
 
         var reply = page.Items[3];
-        Assert.Equal(900002, reply.Parent?.Id);
-        Assert.Equal(900004, reply.Id);
+        Assert.That(reply.Parent?.Id, Is.EqualTo(900002));
+        Assert.That(reply.Id, Is.EqualTo(900004));
 
         // Deleted comments still arrive, with their content blanked, so the thread keeps its
         // shape; filtering them out is the caller's job, not the client's.
         var deleted = page.Items[4];
-        Assert.True(deleted.Deleted);
-        Assert.Equal(string.Empty, deleted.Content?.Raw);
+        Assert.That(deleted.Deleted, Is.True);
+        Assert.That(deleted.Content?.Raw, Is.EqualTo(string.Empty));
     }
 
     // ------------------------------------------------------------ path safety
 
-    [Theory]
-    [InlineData("../../evil", "widget-api", "/2.0/repositories/..%2F..%2Fevil/widget-api/pullrequests")]
-    [InlineData("acme", "my/repo", "/2.0/repositories/acme/my%2Frepo/pullrequests")]
-    [InlineData("a b", "c?d#e", "/2.0/repositories/a%20b/c%3Fd%23e/pullrequests")]
-    [InlineData("acme", "%2e%2e", "/2.0/repositories/acme/%252e%252e/pullrequests")]
-    [InlineData("ünïcode", "repo", "/2.0/repositories/%C3%BCn%C3%AFcode/repo/pullrequests")]
+    [TestCase("../../evil", "widget-api", "/2.0/repositories/..%2F..%2Fevil/widget-api/pullrequests")]
+    [TestCase("acme", "my/repo", "/2.0/repositories/acme/my%2Frepo/pullrequests")]
+    [TestCase("a b", "c?d#e", "/2.0/repositories/a%20b/c%3Fd%23e/pullrequests")]
+    [TestCase("acme", "%2e%2e", "/2.0/repositories/acme/%252e%252e/pullrequests")]
+    [TestCase("ünïcode", "repo", "/2.0/repositories/%C3%BCn%C3%AFcode/repo/pullrequests")]
     public async Task PathSegmentsAreEscapedExactlyOnce(string workspace, string slug, string expectedPath)
     {
         using var stub = new StubHttpMessageHandler();
@@ -643,11 +626,11 @@ public class BitbucketApiClientTests
         _ = await client.ListPullRequestsAsync(
             workspace,
             slug,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         // A slug arrives from the model and may be anything; escaping is what stops it walking out
         // of the repository's namespace or smuggling a query on to the end of the URL.
-        Assert.Equal(expectedPath, RequestUrl.Path(Assert.Single(stub.Requests).Uri));
+        Assert.That(RequestUrl.Path(Expect.Single(stub.Requests).Uri), Is.EqualTo(expectedPath));
     }
 
     /// <summary>
@@ -657,46 +640,44 @@ public class BitbucketApiClientTests
     /// request <c>/pullrequests</c>, outside the <c>/2.0/</c> prefix entirely. Escaping cannot fix
     /// that, so the builder refuses the segment instead.
     /// </summary>
-    [Theory]
-    [InlineData("..", "..")]
-    [InlineData("..", "widget-api")]
-    [InlineData("acme", ".")]
-    [InlineData(".", "widget-api")]
-    [InlineData("acme", "..")]
-    [InlineData("  ..  ", "widget-api")]
+    [TestCase("..", "..")]
+    [TestCase("..", "widget-api")]
+    [TestCase("acme", ".")]
+    [TestCase(".", "widget-api")]
+    [TestCase("acme", "..")]
+    [TestCase("  ..  ", "widget-api")]
     public async Task ADotSegmentIsRejectedBeforeAnyRequest(string workspace, string slug)
     {
         using var stub = new StubHttpMessageHandler();
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.ListPullRequestsAsync(
+        var exception = await Expect.ThrowsAsync<ArgumentException>(() => client.ListPullRequestsAsync(
             workspace,
             slug,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
         // The message is model-facing: it has to say what a slug is, not that a guard tripped.
-        Assert.Contains("must be real slugs", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(stub.Requests);
+        Assert.That(exception.Message, Does.Contain("must be real slugs"));
+        Assert.That(stub.Requests, Is.Empty);
     }
 
-    [Theory]
-    [InlineData(null, "repo")]
-    [InlineData("", "repo")]
-    [InlineData("   ", "repo")]
-    [InlineData("acme", null)]
-    [InlineData("acme", "")]
-    [InlineData("acme", "  ")]
+    [TestCase(null, "repo")]
+    [TestCase("", "repo")]
+    [TestCase("   ", "repo")]
+    [TestCase("acme", null)]
+    [TestCase("acme", "")]
+    [TestCase("acme", "  ")]
     public async Task ABlankWorkspaceOrSlugIsRejectedBeforeAnyRequest(string? workspace, string? slug)
     {
         using var stub = new StubHttpMessageHandler();
         using var client = CreateClient(stub);
 
-        await Assert.ThrowsAnyAsync<ArgumentException>(() => client.ListPullRequestsAsync(
+        await Assert.CatchAsync<ArgumentException>(() => client.ListPullRequestsAsync(
             workspace!,
             slug!,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Empty(stub.Requests);
+        Assert.That(stub.Requests, Is.Empty);
     }
 
     /// <summary>
@@ -704,12 +685,12 @@ public class BitbucketApiClientTests
     /// its URL through the same builder, so none of them can be talked out of the <c>/2.0/</c>
     /// prefix.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task EveryEndpointInheritsTheSlugGuard()
     {
         using var stub = new StubHttpMessageHandler();
         using var client = CreateClient(stub);
-        var cancellationToken = TestContext.Current.CancellationToken;
+        var cancellationToken = TestContext.CurrentContext.CancellationToken;
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             client.GetPullRequestAsync("..", Repository, 412, cancellationToken));
@@ -756,17 +737,17 @@ public class BitbucketApiClientTests
             client.UnrequestChangesAsync(".", Repository, 412, cancellationToken));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            client.MergeAsync("..", Repository, 412, new MergeRequest(), cancellationToken));
+            client.MergeAsync("..", Repository, 412, new MergeRequest(), cancellationToken: cancellationToken));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             client.DeclineAsync(Workspace, "..", 412, cancellationToken: cancellationToken));
 
-        Assert.Empty(stub.Requests);
+        Assert.That(stub.Requests, Is.Empty);
     }
 
     // ----------------------------------------------------------- write bodies
 
-    [Fact]
+    [Test]
     public async Task CreatePullRequestOmitsEveryUnsetField()
     {
         using var stub = new StubHttpMessageHandler();
@@ -782,23 +763,21 @@ public class BitbucketApiClientTests
                 Title = "Add retry handler for 429 responses",
                 Source = new PullRequestEndpointRequest { Branch = new BranchRequest { Name = "feature/retry-handler" } },
             },
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.PullRequestDetail, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("application/json; charset=utf-8", request.Headers["Content-Type"]);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
+        Assert.That(request.Headers["Content-Type"], Is.EqualTo("application/json; charset=utf-8"));
 
         // A null property must be absent, not `null`: Bitbucket treats an explicit null as "clear
         // this field".
-        Assert.Equal(
-            """{"title":"Add retry handler for 429 responses","source":{"branch":{"name":"feature/retry-handler"}}}""",
-            request.Body);
+        Assert.That(request.Body, Is.EqualTo("""{"title":"Add retry handler for 429 responses","source":{"branch":{"name":"feature/retry-handler"}}}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task CreatePullRequestSendsEveryFieldItWasGiven()
     {
         using var stub = new StubHttpMessageHandler();
@@ -819,14 +798,12 @@ public class BitbucketApiClientTests
                 Draft = false,
                 Reviewers = [new AccountRefRequest { Uuid = "{aaaabbbb-cccc-dddd-eeee-ffff00001111}" }],
             },
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(
-            """{"title":"Add retry handler","source":{"branch":{"name":"feature/retry-handler"}},"destination":{"branch":{"name":"main"}},"description":"Retries the transient statuses.","close_source_branch":true,"draft":false,"reviewers":[{"uuid":"{aaaabbbb-cccc-dddd-eeee-ffff00001111}"}]}""",
-            Assert.Single(stub.Requests).Body);
+        Assert.That(Expect.Single(stub.Requests).Body, Is.EqualTo("""{"title":"Add retry handler","source":{"branch":{"name":"feature/retry-handler"}},"destination":{"branch":{"name":"main"}},"description":"Retries the transient statuses.","close_source_branch":true,"draft":false,"reviewers":[{"uuid":"{aaaabbbb-cccc-dddd-eeee-ffff00001111}"}]}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task UpdatePullRequestSendsOnlyTheFieldsBeingChanged()
     {
         using var stub = new StubHttpMessageHandler();
@@ -839,19 +816,19 @@ public class BitbucketApiClientTests
             Repository,
             412,
             new UpdatePullRequestRequest { Title = "Add retry handler (v2)" },
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Put, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.PullRequestDetail, RequestUrl.QueryValue(request.Uri, "fields"));
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Put));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
 
         // Anything omitted keeps its current value; sending nulls would blank the description.
-        Assert.Equal("""{"title":"Add retry handler (v2)"}""", request.Body);
+        Assert.That(request.Body, Is.EqualTo("""{"title":"Add retry handler (v2)"}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task AddCommentPostsAGeneralComment()
     {
         var request = await PostCommentAsync(new CommentRequest
@@ -859,13 +836,13 @@ public class BitbucketApiClientTests
             Content = new CommentContentRequest { Raw = "Looks good to me." },
         });
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/comments", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.Comment, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("""{"content":{"raw":"Looks good to me."}}""", request.Body);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Comment));
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"Looks good to me."}}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task AddCommentPostsAnInlineComment()
     {
         var request = await PostCommentAsync(new CommentRequest
@@ -874,12 +851,10 @@ public class BitbucketApiClientTests
             Inline = new InlineDto { Path = "src/Bitbucket.Mcp/Http/RetryHandler.cs", To = 218 },
         });
 
-        Assert.Equal(
-            """{"content":{"raw":"This needs a test."},"inline":{"path":"src/Bitbucket.Mcp/Http/RetryHandler.cs","to":218}}""",
-            request.Body);
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"This needs a test."},"inline":{"path":"src/Bitbucket.Mcp/Http/RetryHandler.cs","to":218}}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task AddCommentPostsAMultiLineCommentOnTheOldSide()
     {
         var request = await PostCommentAsync(new CommentRequest
@@ -888,12 +863,10 @@ public class BitbucketApiClientTests
             Inline = new InlineDto { Path = "src/A.cs", From = 118, StartFrom = 112 },
         });
 
-        Assert.Equal(
-            """{"content":{"raw":"This block moved."},"inline":{"path":"src/A.cs","from":118,"start_from":112}}""",
-            request.Body);
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"This block moved."},"inline":{"path":"src/A.cs","from":118,"start_from":112}}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task AddCommentPostsAReply()
     {
         var request = await PostCommentAsync(new CommentRequest
@@ -902,12 +875,12 @@ public class BitbucketApiClientTests
             Parent = new CommentParentRequest { Id = 900002 },
         });
 
-        Assert.Equal("""{"content":{"raw":"Agreed."},"parent":{"id":900002}}""", request.Body);
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"Agreed."},"parent":{"id":900002}}"""));
     }
 
     // --------------------------------------------------------- review actions
 
-    [Fact]
+    [Test]
     public async Task ApprovePostsToApproveAndReturnsTheCallersParticipantEntry()
     {
         using var stub = new StubHttpMessageHandler();
@@ -919,20 +892,20 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/approve", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.Participant, RequestUrl.QueryValue(request.Uri, "fields"));
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/approve"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Participant));
 
-        Assert.True(participant.Approved);
-        Assert.Equal("approved", participant.State);
-        Assert.Equal("Ada Byron", participant.User?.DisplayName);
+        Assert.That(participant.Approved, Is.True);
+        Assert.That(participant.State, Is.EqualTo("approved"));
+        Assert.That(participant.User?.DisplayName, Is.EqualTo("Ada Byron"));
     }
 
-    [Fact]
+    [Test]
     public async Task RequestChangesPostsToRequestChanges()
     {
         using var stub = new StubHttpMessageHandler();
@@ -944,19 +917,18 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/request-changes", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.Participant, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("changes_requested", participant.State);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/request-changes"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Participant));
+        Assert.That(participant.State, Is.EqualTo("changes_requested"));
     }
 
-    [Theory]
-    [InlineData("approve")]
-    [InlineData("request-changes")]
+    [TestCase("approve")]
+    [TestCase("request-changes")]
     public async Task WithdrawingAReviewIsADeleteWithNoFieldsAndNoBody(string segment)
     {
         using var stub = new StubHttpMessageHandler();
@@ -966,88 +938,223 @@ public class BitbucketApiClientTests
 
         if (segment == "approve")
         {
-            await client.UnapproveAsync(Workspace, Repository, 412, TestContext.Current.CancellationToken);
+            await client.UnapproveAsync(Workspace, Repository, 412, TestContext.CurrentContext.CancellationToken);
         }
         else
         {
-            await client.UnrequestChangesAsync(Workspace, Repository, 412, TestContext.Current.CancellationToken);
+            await client.UnrequestChangesAsync(Workspace, Repository, 412, TestContext.CurrentContext.CancellationToken);
         }
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Delete));
 
         // No `fields=`: a 204 has nothing to shape.
-        Assert.Equal($"/2.0/repositories/acme/widget-api/pullrequests/412/{segment}", RequestUrl.PathAndQuery(request.Uri));
-        Assert.Null(request.Body);
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo($"/2.0/repositories/acme/widget-api/pullrequests/412/{segment}"));
+        Assert.That(request.Body, Is.Null);
     }
 
     // ------------------------------------------------------------------ merge
 
-    [Fact]
-    public async Task MergeAsksForTheTaskStatusAlongsideThePullRequest()
+    [Test]
+    public async Task MergeAsksForThePullRequestDetail()
     {
         using var stub = new StubHttpMessageHandler();
         stub.EnqueueJson(HttpFixtures.Read("http-pullrequest-merged.json"));
 
         using var client = CreateClient(stub);
 
-        var merged = await client.MergeAsync(
+        var outcome = await client.MergeAsync(
             Workspace,
             Repository,
             412,
             new MergeRequest { Message = "Merged via MCP", CloseSourceBranch = true, MergeStrategy = "squash" },
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/merge", RequestUrl.Path(request.Uri));
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/merge"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
+        Assert.That(request.Body, Is.EqualTo("""{"message":"Merged via MCP","close_source_branch":true,"merge_strategy":"squash"}"""));
 
-        // A queued merge answers with nothing but task_status; leaving it out of the field list
-        // would leave the "merge was queued" error with nothing to quote.
-        Assert.Equal(
-            FieldSets.PullRequestDetail + ",task_status",
-            RequestUrl.QueryValue(request.Uri, "fields"));
-
-        Assert.Equal(
-            """{"message":"Merged via MCP","close_source_branch":true,"merge_strategy":"squash"}""",
-            request.Body);
-
-        Assert.Equal("MERGED", merged.State);
-        Assert.Equal("fedcba987654", merged.MergeCommit?.Hash);
-        Assert.Equal("Ada Byron", merged.ClosedBy?.DisplayName);
+        var merged = Expect.NotNull(outcome.PullRequest);
+        Assert.That(merged.State, Is.EqualTo("MERGED"));
+        Assert.That(merged.MergeCommit?.Hash, Is.EqualTo("fedcba987654"));
+        Assert.That(merged.ClosedBy?.DisplayName, Is.EqualTo("Ada Byron"));
+        Assert.That(outcome.TaskId, Is.Null);
     }
 
-    [Fact]
-    public async Task AQueuedMergeIsReportedAsAnActionableFailureRatherThanPolled()
+    /// <summary>
+    /// A merge into a queued branch, or one past Bitbucket's synchronous timeout, answers 202 with
+    /// the task in Location. The task is followed, and a merge that lands in time comes back as a
+    /// 200 would have.
+    /// </summary>
+    [Test]
+    public async Task AMergeTaskIsFollowedUntilItLands()
     {
-        var body = HttpFixtures.Read("http-merge-queued.json");
+        var time = new ManualTimeProvider();
+        var merged = HttpFixtures.Read("http-pullrequest-merged.json");
 
         using var stub = new StubHttpMessageHandler();
-        stub.EnqueueJson(body, HttpStatusCode.Accepted);
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.EnqueueJson(QueuedTaskStatus);
+        stub.EnqueueJson($$"""{"task_status":"SUCCESS","merge_result":{{merged}}}""");
 
-        using var client = CreateClient(stub);
+        using var client = CreateClient(stub, timeProvider: time);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.MergeAsync(
+        var waits = new List<MergeWait>();
+        var outcome = await client.MergeAsync(
             Workspace,
             Repository,
             412,
             new MergeRequest(),
-            TestContext.Current.CancellationToken));
+            waits.Add,
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.Accepted, exception.StatusCode);
-        Assert.Equal(body, exception.RawBody);
+        Assert.That(Expect.NotNull(outcome.PullRequest).State, Is.EqualTo("MERGED"));
+        Assert.That(outcome.TaskId, Is.Null);
 
-        // The message has to say what happened and what to do; re-running a merge that may have
-        // succeeded is the expensive mistake here.
-        Assert.Contains("queued", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("task status PENDING", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Bitbucket UI", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("only re-run the merge if it did not", exception.Message, StringComparison.Ordinal);
+        Assert.That(stub.Requests.Count, Is.EqualTo(3));
+        Assert.That(stub.Requests[1].Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.Path(stub.Requests[1].Uri), Is.EqualTo(MergeTaskPath));
+        Assert.That(RequestUrl.Path(stub.Requests[2].Uri), Is.EqualTo(MergeTaskPath));
+
+        // One look per scheduled delay, and the first unanswered one is reported as queued.
+        Assert.That(time.Delays, Is.EqualTo(BitbucketApiClient.MergeTaskPollDelays[..2]));
+        Assert.That(waits, Is.EqualTo(new[] { new MergeWait(1, BitbucketApiClient.MergeTaskPollDelays.Length, InMergeQueue: true) }));
     }
 
-    [Fact]
+    /// <summary>
+    /// A merge queue can hold a pull request for as long as its builds take. After the schedule the
+    /// task itself comes back — never an error, because the merge is under way and merging again is
+    /// the mistake to prevent.
+    /// </summary>
+    [Test]
+    public async Task AMergeStillPendingAfterTheScheduleComesBackAsItsTask()
+    {
+        var time = new ManualTimeProvider();
+
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+
+        foreach (var _ in BitbucketApiClient.MergeTaskPollDelays)
+        {
+            stub.EnqueueJson(QueuedTaskStatus);
+        }
+
+        using var client = CreateClient(stub, timeProvider: time);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(outcome.PullRequest, Is.Null);
+        Assert.That(outcome.TaskId, Is.EqualTo(MergeTaskId));
+        Assert.That(outcome.InMergeQueue, Is.True);
+        Assert.That(stub.Requests.Count, Is.EqualTo(1 + BitbucketApiClient.MergeTaskPollDelays.Length));
+        Assert.That(time.Delays, Is.EqualTo(BitbucketApiClient.MergeTaskPollDelays));
+        Assert.That(time.Delays.Aggregate(TimeSpan.Zero, (sum, delay) => sum + delay), Is.EqualTo(TimeSpan.FromSeconds(25)));
+    }
+
+    /// <summary>A task that fails answers the poll with an error, which is the merge's failure.</summary>
+    [Test]
+    public async Task AFailedMergeTaskSurfacesAsTheMergeFailure()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.Enqueue(
+            HttpStatusCode.BadRequest,
+            """{"type":"error","error":{"message":"The pull request left the merge queue without merging."}}""");
+
+        using var client = CreateClient(stub);
+
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
+
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(exception.Message, Does.Contain("left the merge queue"));
+    }
+
+    /// <summary>A success that does not carry the pull request reads it, so the shape matches a 200.</summary>
+    [Test]
+    public async Task ASuccessWithoutTheMergedPullRequestReadsItBack()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.EnqueueJson("""{"task_status":"SUCCESS"}""");
+        stub.EnqueueJson(HttpFixtures.Read("http-pullrequest-merged.json"));
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(Expect.NotNull(outcome.PullRequest).MergeCommit?.Hash, Is.EqualTo("fedcba987654"));
+        Assert.That(RequestUrl.Path(stub.Requests[2].Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412"));
+    }
+
+    /// <summary>
+    /// Location is server-supplied. Only this pull request's own task-status endpoint on the API host
+    /// is followed, and only by id: anywhere else is not requested at all.
+    /// </summary>
+    [TestCase("https://evil.example/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc")]
+    [TestCase("http://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/413/merge/task-status/abc")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc/../../../../decline")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/")]
+    public async Task AMergeTaskLinkThatIsNotThisPullRequestsIsNeverFollowed(string location)
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(location));
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(stub.Requests, Has.Exactly(1).Items);
+        Assert.That(outcome.PullRequest, Is.Null);
+        Assert.That(outcome.TaskId, Is.Null);
+    }
+
+    /// <summary>A relative Location resolves against the merge request, like any other.</summary>
+    [Test]
+    public async Task ARelativeMergeTaskLinkIsFollowed()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskPath));
+        stub.EnqueueJson($$"""{"task_status":"SUCCESS","merge_result":{{HttpFixtures.Read("http-pullrequest-merged.json")}}}""");
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(outcome.PullRequest, Is.Not.Null);
+        Assert.That(RequestUrl.Path(stub.Requests[1].Uri), Is.EqualTo(MergeTaskPath));
+    }
+
+    [Test]
     public async Task AnEmptyMergeRequestSerialisesToAnEmptyObject()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1060,14 +1167,102 @@ public class BitbucketApiClientTests
             Repository,
             412,
             new MergeRequest(),
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal("{}", Assert.Single(stub.Requests).Body);
+        Assert.That(Expect.Single(stub.Requests).Body, Is.EqualTo("{}"));
+    }
+
+    // ------------------------------------------- mergeability, comment edits, list filters
+
+    [Test]
+    public async Task MergeabilityChecksAreReadFromTheirOwnEndpoint()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(HttpFixtures.Read("http-mergeability-checks.json"));
+
+        using var client = CreateClient(stub);
+
+        var checks = await client.GetMergeabilityChecksAsync(Workspace, Repository, 412, TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/mergeability/checks"));
+
+        var values = Expect.NotNull(checks.Values);
+        Assert.That(values.Count, Is.EqualTo(6));
+
+        var approvals = values[3];
+        Assert.That(approvals.Check?.Kind, Is.EqualTo("minimum_approvals"));
+        Assert.That(approvals.Blocking, Is.True);
+        Assert.That(Expect.NotNull(approvals.Requirement).GetProperty("minimum_approvals").GetInt32(), Is.EqualTo(2));
+        Assert.That(Expect.NotNull(approvals.Observed).GetProperty("approval_count").GetInt32(), Is.EqualTo(1));
+
+        Assert.That(values[0].State, Is.EqualTo("OPEN"));
+        Assert.That(values[2].Reason, Is.EqualTo("clean"));
+        Assert.That(values[5].Check?.Name, Is.EqualTo("License scan"));
+        Assert.That(values[5].Message, Is.EqualTo("No new licenses."));
+    }
+
+    [Test]
+    public async Task EditingACommentPutsOnlyItsNewText()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(HttpFixtures.Read("http-comment-created.json"));
+
+        using var client = CreateClient(stub);
+
+        _ = await client.UpdateCommentAsync(Workspace, Repository, 412, 1001, "Fixed wording.", TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Put));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments/1001"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Comment));
+
+        // No inline and no parent: an edit changes the text and nothing else.
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"Fixed wording."}}"""));
+    }
+
+    [Test]
+    public async Task DeletingACommentSendsADeleteWithNoBody()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(HttpStatusCode.NoContent);
+
+        using var client = CreateClient(stub);
+
+        await client.DeleteCommentAsync(Workspace, Repository, 412, 1001, TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Delete));
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments/1001"));
+        Assert.That(request.Body, Is.Null.Or.Empty);
+    }
+
+    [TestCase("{11111111-2222-3333-4444-555555555555}", "reviewers.uuid = \"{11111111-2222-3333-4444-555555555555}\"")]
+    [TestCase("ada", "reviewers.nickname = \"ada\"")]
+    public async Task ReviewerAndDestinationBranchBecomeBbqlClauses(string reviewer, string reviewerClause)
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(EmptyPage);
+
+        using var client = CreateClient(stub);
+
+        _ = await client.ListPullRequestsAsync(
+            Workspace,
+            Repository,
+            states: ["OPEN"],
+            reviewer: reviewer,
+            destinationBranch: "main",
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(
+            RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"),
+            Is.EqualTo($"state = \"OPEN\" AND {reviewerClause} AND destination.branch.name = \"main\""));
     }
 
     // ---------------------------------------------------------------- decline
 
-    [Fact]
+    [Test]
     public async Task DeclinePostsTheReasonBestEffort()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1080,17 +1275,17 @@ public class BitbucketApiClientTests
             Repository,
             412,
             "Superseded by #500",
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/2.0/repositories/acme/widget-api/pullrequests/412/decline", RequestUrl.Path(request.Uri));
-        Assert.Equal(FieldSets.PullRequestDetail, RequestUrl.QueryValue(request.Uri, "fields"));
-        Assert.Equal("""{"reason":"Superseded by #500"}""", request.Body);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/decline"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
+        Assert.That(request.Body, Is.EqualTo("""{"reason":"Superseded by #500"}"""));
     }
 
-    [Fact]
+    [Test]
     public async Task DeclineWithoutAReasonPostsAnEmptyObject()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1102,14 +1297,14 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal("{}", Assert.Single(stub.Requests).Body);
+        Assert.That(Expect.Single(stub.Requests).Body, Is.EqualTo("{}"));
     }
 
     // ----------------------------------------------------------------- errors
 
-    [Fact]
+    [Test]
     public async Task AValidationFailureCarriesTheParsedEnvelopeAndTheRawBody()
     {
         var body = HttpFixtures.Read("http-error-validation.json");
@@ -1119,7 +1314,7 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.CreatePullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.CreatePullRequestAsync(
             Workspace,
             Repository,
             new CreatePullRequestRequest
@@ -1127,26 +1322,26 @@ public class BitbucketApiClientTests
                 Title = "x",
                 Source = new PullRequestEndpointRequest { Branch = new BranchRequest { Name = "feature/does-not-exist" } },
             },
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
-        Assert.Equal(body, exception.RawBody);
-        Assert.Equal(0, exception.RetryAttempts);
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(exception.RawBody, Is.EqualTo(body));
+        Assert.That(exception.RetryAttempts, Is.EqualTo(0));
 
-        Assert.Equal("title: This field is required.", exception.Error?.Error?.Message);
-        Assert.StartsWith("The pull request could not be created", exception.Error?.Error?.Detail, StringComparison.Ordinal);
+        Assert.That(exception.Error?.Error?.Message, Is.EqualTo("title: This field is required."));
+        Assert.That(exception.Error?.Error?.Detail, Does.StartWith("The pull request could not be created"));
 
         // The per-field errors are the useful part of a rejected write.
         var fields = exception.Error?.Error?.Fields;
-        Assert.NotNull(fields);
-        Assert.Equal(TitleFieldErrors, fields["title"]);
-        Assert.Equal(2, fields["source"].Count);
+        Assert.That(fields, Is.Not.Null);
+        Assert.That(fields["title"], Is.EqualTo(TitleFieldErrors));
+        Assert.That(fields["source"].Count, Is.EqualTo(2));
 
-        Assert.Contains("HTTP 400 (BadRequest)", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("title: This field is required.", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("HTTP 400 (BadRequest)"));
+        Assert.That(exception.Message, Does.Contain("title: This field is required."));
     }
 
-    [Fact]
+    [Test]
     public async Task BitbucketsNonStandard555KeepsItsNumericStatus()
     {
         var body = HttpFixtures.Read("http-error-555-diff-too-large.json");
@@ -1156,23 +1351,23 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetDiffAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetDiffAsync(
             Workspace,
             Repository,
             412,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(555, (int) exception.StatusCode);
-        Assert.Equal(body, exception.RawBody);
-        Assert.Equal("Diff too large to render.", exception.Error?.Error?.Message);
+        Assert.That((int) exception.StatusCode, Is.EqualTo(555));
+        Assert.That(exception.RawBody, Is.EqualTo(body));
+        Assert.That(exception.Error?.Error?.Message, Is.EqualTo("Diff too large to render."));
 
         // 555 has no name in HttpStatusCode, so the message must not invent one.
-        Assert.Contains("HTTP 555.", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("(555)", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Diff too large to render.", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("HTTP 555."));
+        Assert.That(exception.Message, Does.Not.Contain("(555)"));
+        Assert.That(exception.Message, Does.Contain("Diff too large to render."));
     }
 
-    [Fact]
+    [Test]
     public async Task ANonJsonErrorBodyIsToleratedAndKeptVerbatim()
     {
         const string Html = "<html>\n  <head><title>503 Service Unavailable</title></head>\n  <body>Bitbucket is down.</body>\n</html>";
@@ -1184,22 +1379,22 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, exception.StatusCode);
-        Assert.Null(exception.Error);
-        Assert.Equal(Html, exception.RawBody);
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+        Assert.That(exception.Error, Is.Null);
+        Assert.That(exception.RawBody, Is.EqualTo(Html));
 
         // Retries are reported so a 5xx message can say the request was not simply unlucky once.
-        Assert.Equal(RetryHandler.MaxAttempts - 1, exception.RetryAttempts);
-        Assert.Contains("after 3 retries", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.RetryAttempts, Is.EqualTo(RetryHandler.MaxAttempts - 1));
+        Assert.That(exception.Message, Does.Contain("after 3 retries"));
 
         // The message quotes a collapsed single-line snippet, never the raw multi-line page.
-        Assert.False(exception.Message.Contains('\n', StringComparison.Ordinal));
+        Assert.That(exception.Message.Contains('\n', StringComparison.Ordinal), Is.False);
     }
 
     /// <summary>
@@ -1208,9 +1403,8 @@ public class BitbucketApiClientTests
     /// <see cref="RetryHandler.MaxRetryAfter"/>, so the response comes back unretried — which is
     /// exactly the case where the caller has to be told how long is left.
     /// </summary>
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task ARetryAfterOnTheFinalResponseTravelsOnTheException(bool asHttpDate)
     {
         var time = new ManualTimeProvider();
@@ -1231,19 +1425,19 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub, timeProvider: time);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
-        Assert.Single(stub.Requests);
-        Assert.Equal(HttpStatusCode.TooManyRequests, exception.StatusCode);
-        Assert.Equal(90, exception.RetryAfterSeconds);
-        Assert.Equal(0, exception.RetryAttempts);
+        Assert.That(stub.Requests, Has.Exactly(1).Items);
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+        Assert.That(exception.RetryAfterSeconds, Is.EqualTo(90));
+        Assert.That(exception.RetryAttempts, Is.EqualTo(0));
     }
 
-    [Fact]
+    [Test]
     public async Task AFailureWithoutARetryAfterHeaderReportsNoWait()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1253,19 +1447,19 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
         // Null rather than a default: "Bitbucket did not say" and "Bitbucket said zero" are
         // different pieces of advice.
-        Assert.Null(exception.RetryAfterSeconds);
-        Assert.Equal(RetryHandler.MaxAttempts - 1, exception.RetryAttempts);
+        Assert.That(exception.RetryAfterSeconds, Is.Null);
+        Assert.That(exception.RetryAttempts, Is.EqualTo(RetryHandler.MaxAttempts - 1));
     }
 
-    [Fact]
+    [Test]
     public async Task AnEmptyBodyOnASuccessIsAFailure()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1273,19 +1467,19 @@ public class BitbucketApiClientTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(HttpStatusCode.OK, exception.StatusCode);
-        Assert.Contains("could not parse", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(exception.Message, Does.Contain("could not parse"));
     }
 
     // ---------------------------------------------------------------- headers
 
-    [Fact]
+    [Test]
     public async Task EveryRequestIdentifiesTheServerAndItsRepository()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1296,17 +1490,17 @@ public class BitbucketApiClientTests
         _ = await client.ListPullRequestsAsync(
             Workspace,
             Repository,
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
         var userAgent = request.Headers["User-Agent"];
 
-        Assert.StartsWith($"{ServerVersion.Name}/{ServerVersion.Value}", userAgent, StringComparison.Ordinal);
-        Assert.Contains(ProjectUrl, userAgent, StringComparison.Ordinal);
-        Assert.Equal("application/json", request.Headers["Accept"]);
+        Assert.That(userAgent, Does.StartWith($"{ServerVersion.Name}/{ServerVersion.Value}"));
+        Assert.That(userAgent, Does.Contain(ProjectUrl));
+        Assert.That(request.Headers["Accept"], Is.EqualTo("application/json"));
     }
 
-    [Fact]
+    [Test]
     public async Task TheAuthorizationHeaderComesFromTheCredentialProviderPerRequest()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1316,18 +1510,18 @@ public class BitbucketApiClientTests
         var credentials = new StubCredentialProvider("token-1");
         using var client = CreateClient(stub, credentials);
 
-        _ = await client.ListPullRequestsAsync(Workspace, Repository, cancellationToken: TestContext.Current.CancellationToken);
-        _ = await client.ListPullRequestsAsync(Workspace, Repository, cancellationToken: TestContext.Current.CancellationToken);
+        _ = await client.ListPullRequestsAsync(Workspace, Repository, cancellationToken: TestContext.CurrentContext.CancellationToken);
+        _ = await client.ListPullRequestsAsync(Workspace, Repository, cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.All(stub.Requests, request => Assert.Equal("Bearer token-1", request.Headers["Authorization"]));
+        Assert.That(stub.Requests.Select(request => request.Headers["Authorization"]), Is.All.EqualTo("Bearer token-1"));
 
         // Per request, never a default header: the pipeline decides per hop who is allowed the
         // credential, and a default header would be attached to requests it never inspected.
-        Assert.Equal(2, credentials.HeaderRequestCount);
-        Assert.Equal(0, credentials.InvalidateCount);
+        Assert.That(credentials.HeaderRequestCount, Is.EqualTo(2));
+        Assert.That(credentials.InvalidateCount, Is.EqualTo(0));
     }
 
-    [Fact]
+    [Test]
     public async Task A401InvalidatesTheCredentialAndRetriesOnceWithAFreshHeader()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1341,19 +1535,19 @@ public class BitbucketApiClientTests
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(412, pullRequest.Id);
+        Assert.That(pullRequest.Id, Is.EqualTo(412));
 
-        Assert.Equal(2, stub.Requests.Count);
-        Assert.Equal("Bearer stale-token", stub.Requests[0].Headers["Authorization"]);
-        Assert.Equal("Bearer fresh-token", stub.Requests[1].Headers["Authorization"]);
+        Assert.That(stub.Requests.Count, Is.EqualTo(2));
+        Assert.That(stub.Requests[0].Headers["Authorization"], Is.EqualTo("Bearer stale-token"));
+        Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer fresh-token"));
 
-        Assert.Equal(1, credentials.InvalidateCount);
-        Assert.Equal(2, credentials.HeaderRequestCount);
+        Assert.That(credentials.InvalidateCount, Is.EqualTo(1));
+        Assert.That(credentials.HeaderRequestCount, Is.EqualTo(2));
     }
 
-    [Fact]
+    [Test]
     public async Task ASecond401IsReportedRatherThanRetriedAgain()
     {
         using var stub = new StubHttpMessageHandler();
@@ -1364,21 +1558,21 @@ public class BitbucketApiClientTests
         var credentials = new StubCredentialProvider("stale-token", "also-wrong");
         using var client = CreateClient(stub, credentials);
 
-        var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
+        var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => client.GetPullRequestAsync(
             Workspace,
             Repository,
             412,
-            TestContext.Current.CancellationToken));
+            TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(HttpStatusCode.Unauthorized, exception.StatusCode);
-        Assert.Equal("Invalid token", exception.Error?.Error?.Message);
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That(exception.Error?.Error?.Message, Is.EqualTo("Invalid token"));
 
         // Exactly one retry: a freshly acquired credential that is also rejected is wrong rather
         // than stale, and looping would only turn a clear 401 into a slow one. A 401 is also never
         // retried by the backoff handler.
-        Assert.Equal(2, stub.Requests.Count);
-        Assert.Equal(1, credentials.InvalidateCount);
-        Assert.Equal(0, exception.RetryAttempts);
+        Assert.That(stub.Requests.Count, Is.EqualTo(2));
+        Assert.That(credentials.InvalidateCount, Is.EqualTo(1));
+        Assert.That(exception.RetryAttempts, Is.EqualTo(0));
     }
 
     private static async Task<RecordedRequest> PostCommentAsync(CommentRequest body)
@@ -1393,9 +1587,27 @@ public class BitbucketApiClientTests
             Repository,
             412,
             body,
-            TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        return Assert.Single(stub.Requests);
+        return Expect.Single(stub.Requests);
+    }
+
+    private const string MergeTaskId = "e7c0ffee-1234-4a5b-8c9d-0123456789ab";
+    private const string MergeTaskPath = "/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/" + MergeTaskId;
+    private const string MergeTaskUrl = "https://api.bitbucket.org" + MergeTaskPath;
+
+    /// <summary>
+    /// A task that is waiting in a merge queue. SYNTHETIC: shaped after the task-status endpoint's
+    /// description in Bitbucket's OpenAPI document, not captured from a live account.
+    /// </summary>
+    private const string QueuedTaskStatus = """{"task_status":"PENDING","queued_pullrequest":{"type":"queued_pullrequest"}}""";
+
+    /// <summary>Bitbucket's 202 for a merge it turned into a task, pointing at the task in Location.</summary>
+    private static HttpResponseMessage MergeAccepted(string location)
+    {
+        var response = StubHttpMessageHandler.CreateResponse(HttpStatusCode.Accepted, HttpFixtures.Read("http-merge-queued.json"));
+        response.Headers.Location = new Uri(location, UriKind.RelativeOrAbsolute);
+        return response;
     }
 
     private static BitbucketApiClient CreateClient(

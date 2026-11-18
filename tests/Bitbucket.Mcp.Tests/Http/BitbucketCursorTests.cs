@@ -6,7 +6,6 @@ using Bitbucket.Mcp.Http;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -24,8 +23,8 @@ public class BitbucketCursorTests
         "https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests?fields=next%2Csize&page=2&pagelen=3";
 
     /// <summary>URLs that must never be reachable through a cursor, and why.</summary>
-    public static TheoryData<string> UnsafeUrls => new()
-    {
+    public static string[] UnsafeUrls =>
+    [
         "http://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests",   // plaintext
         "https://evil.example/2.0/repositories/acme/widget-api/pullrequests",       // wrong host
         "https://api.bitbucket.org.evil.example/2.0/pullrequests",                  // host suffix trick
@@ -36,104 +35,100 @@ public class BitbucketCursorTests
         "https://169.254.169.254/2.0/",                                             // cloud metadata
         "file:///etc/passwd",                                                       // not http at all
         "not a url at all",
-    };
+    ];
 
-    [Fact]
+    [Test]
     public void RoundTripsANextUrl()
     {
         var cursor = BitbucketCursor.Encode(NextUrl);
 
-        Assert.NotNull(cursor);
-        Assert.NotEqual(NextUrl, cursor);
+        Assert.That(cursor, Is.Not.Null);
+        Assert.That(cursor, Is.Not.EqualTo(NextUrl));
 
-        Assert.True(BitbucketCursor.TryDecode(cursor, out var decoded));
-        Assert.Equal(NextUrl, decoded);
+        Assert.That(BitbucketCursor.TryDecode(cursor, out var decoded), Is.True);
+        Assert.That(decoded, Is.EqualTo(NextUrl));
     }
 
-    [Fact]
+    [Test]
     public void EncodesToUrlAndJsonSafeCharactersOnly()
     {
         var cursor = BitbucketCursor.Encode(NextUrl);
 
-        Assert.NotNull(cursor);
-        Assert.All(cursor, c => Assert.True(
-            char.IsAsciiLetterOrDigit(c) || c is '-' or '_',
-            $"'{c}' is outside the base64url alphabet."));
+        Assert.That(cursor, Is.Not.Null);
+        Assert.That(
+            cursor,
+            Has.All.Matches<char>(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'),
+            "Every character must be in the base64url alphabet.");
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("   ")]
     public void EncodeReturnsNullWhenThereIsNoNextPage(string? nextUrl) =>
-        Assert.Null(BitbucketCursor.Encode(nextUrl));
+        Assert.That(BitbucketCursor.Encode(nextUrl), Is.Null);
 
-    [Theory]
-    [MemberData(nameof(UnsafeUrls))]
+    [TestCaseSource(nameof(UnsafeUrls))]
     public void EncodeRefusesUrlsItWouldNotAcceptBack(string nextUrl) =>
-        Assert.Null(BitbucketCursor.Encode(nextUrl));
+        Assert.That(BitbucketCursor.Encode(nextUrl), Is.Null);
 
-    [Theory]
-    [MemberData(nameof(UnsafeUrls))]
+    [TestCaseSource(nameof(UnsafeUrls))]
     public void TryDecodeRejectsUnsafeUrls(string url)
     {
         var cursor = Base64Url.EncodeToString(Encoding.UTF8.GetBytes(url));
 
-        Assert.False(BitbucketCursor.TryDecode(cursor, out var decoded));
-        Assert.Null(decoded);
+        Assert.That(BitbucketCursor.TryDecode(cursor, out var decoded), Is.False);
+        Assert.That(decoded, Is.Null);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("!!!not-base64url!!!")]
-    [InlineData("aGVsbG8+")]        // '+' belongs to standard base64, not base64url
-    [InlineData("aGVsbG8/d29ybGQ")] // '/' likewise
-    [InlineData("äöü")]
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("   ")]
+    [TestCase("!!!not-base64url!!!")]
+    [TestCase("aGVsbG8+")]        // '+' belongs to standard base64, not base64url
+    [TestCase("aGVsbG8/d29ybGQ")] // '/' likewise
+    [TestCase("äöü")]
     public void TryDecodeRejectsMalformedInputWithoutThrowing(string? cursor)
     {
         // Base64Url.TryDecodeFromChars is only "try" about the destination buffer: it throws
         // FormatException on a malformed input. TryDecode gates on Base64Url.IsValid first, and
         // this test is what keeps that gate in place.
-        Assert.False(BitbucketCursor.TryDecode(cursor, out var decoded));
-        Assert.Null(decoded);
+        Assert.That(BitbucketCursor.TryDecode(cursor, out var decoded), Is.False);
+        Assert.That(decoded, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public void TryDecodeRejectsAValidEncodingOfSomethingThatIsNotAUrl()
     {
         var cursor = Base64Url.EncodeToString("hello"u8.ToArray());
 
-        Assert.False(BitbucketCursor.TryDecode(cursor, out _));
+        Assert.That(BitbucketCursor.TryDecode(cursor, out _), Is.False);
     }
 
-    [Fact]
+    [Test]
     public void TryDecodeRejectsInvalidUtf8()
     {
         var cursor = Base64Url.EncodeToString([0xFF, 0xFE, 0xFD, 0xFC]);
 
-        Assert.False(BitbucketCursor.TryDecode(cursor, out _));
+        Assert.That(BitbucketCursor.TryDecode(cursor, out _), Is.False);
     }
 
-    [Fact]
+    [Test]
     public void TryDecodeRejectsAnOversizedCursorBeforeAllocating()
     {
         var cursor = new string('A', 8192);
 
-        Assert.False(BitbucketCursor.TryDecode(cursor, out _));
+        Assert.That(BitbucketCursor.TryDecode(cursor, out _), Is.False);
     }
 
-    [Theory]
-    [InlineData("https://api.bitbucket.org/2.0/", true)]
-    [InlineData("https://API.BITBUCKET.ORG/2.0/pullrequests", true)]
-    [InlineData("https://api.bitbucket.org/2.0", false)]
-    [InlineData("https://api.bitbucket.org/", false)]
-    [InlineData(null, false)]
+    [TestCase("https://api.bitbucket.org/2.0/", true)]
+    [TestCase("https://API.BITBUCKET.ORG/2.0/pullrequests", true)]
+    [TestCase("https://api.bitbucket.org/2.0", false)]
+    [TestCase("https://api.bitbucket.org/", false)]
+    [TestCase(null, false)]
     public void IsBitbucketApiUrlMatchesTheDocumentedRules(string? url, bool expected) =>
-        Assert.Equal(expected, BitbucketCursor.IsBitbucketApiUrl(url));
+        Assert.That(BitbucketCursor.IsBitbucketApiUrl(url), Is.EqualTo(expected));
 
-    [Fact]
+    [Test]
     public async Task ListPullRequestsWithACursorRequestsExactlyTheDecodedUrl()
     {
         using var stub = new StubHttpMessageHandler();
@@ -148,16 +143,16 @@ public class BitbucketCursorTests
             author: "jane",
             pageSize: 25,
             cursor: BitbucketCursor.Encode(NextUrl),
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        var request = Assert.Single(stub.Requests);
+        var request = Expect.Single(stub.Requests);
 
         // Byte for byte: a cursor is Bitbucket's own opaque URL and re-composing it would drop the
         // query state it encodes. The filters passed alongside it are ignored for the same reason.
-        Assert.Equal(NextUrl, request.Uri?.AbsoluteUri);
+        Assert.That(request.Uri?.AbsoluteUri, Is.EqualTo(NextUrl));
     }
 
-    [Fact]
+    [Test]
     public async Task DiffStatWithACursorRequestsExactlyTheDecodedUrl()
     {
         const string DiffStatNext =
@@ -173,12 +168,12 @@ public class BitbucketCursorTests
             "widget-api",
             412,
             cursor: BitbucketCursor.Encode(DiffStatNext),
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(DiffStatNext, Assert.Single(stub.Requests).Uri?.AbsoluteUri);
+        Assert.That(Expect.Single(stub.Requests).Uri?.AbsoluteUri, Is.EqualTo(DiffStatNext));
     }
 
-    [Fact]
+    [Test]
     public async Task CommentsWithACursorRequestExactlyTheDecodedUrl()
     {
         const string CommentsNext =
@@ -194,13 +189,12 @@ public class BitbucketCursorTests
             "widget-api",
             412,
             cursor: BitbucketCursor.Encode(CommentsNext),
-            cancellationToken: TestContext.Current.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(CommentsNext, Assert.Single(stub.Requests).Uri?.AbsoluteUri);
+        Assert.That(Expect.Single(stub.Requests).Uri?.AbsoluteUri, Is.EqualTo(CommentsNext));
     }
 
-    [Theory]
-    [MemberData(nameof(UnsafeUrls))]
+    [TestCaseSource(nameof(UnsafeUrls))]
     public async Task AHostileCursorIsRejectedBeforeAnyRequestIsMade(string url)
     {
         var cursor = Base64Url.EncodeToString(Encoding.UTF8.GetBytes(url));
@@ -212,23 +206,23 @@ public class BitbucketCursorTests
 
         using var client = CreateClient(stub);
 
-        var exception = await Assert.ThrowsAsync<InvalidCursorException>(() => client.ListPullRequestsAsync(
+        var exception = await Expect.ThrowsAsync<InvalidCursorException>(() => client.ListPullRequestsAsync(
             "acme",
             "widget-api",
             cursor: cursor,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(cursor, exception.Cursor);
+        Assert.That(exception.Cursor, Is.EqualTo(cursor));
 
         // The point of the guard: nothing left the process, so no credential was offered to the
         // host the cursor named.
-        Assert.Empty(stub.Requests);
+        Assert.That(stub.Requests, Is.Empty);
 
         // The offending cursor stays out of the user-visible message.
-        Assert.DoesNotContain(cursor, exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Not.Contain(cursor));
     }
 
-    [Fact]
+    [Test]
     public async Task AMalformedCursorIsRejectedBeforeAnyRequestIsMade()
     {
         using var stub = new StubHttpMessageHandler();
@@ -239,9 +233,9 @@ public class BitbucketCursorTests
             "widget-api",
             412,
             cursor: "!!!not-base64url!!!",
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.Empty(stub.Requests);
+        Assert.That(stub.Requests, Is.Empty);
     }
 
     private static BitbucketApiClient CreateClient(StubHttpMessageHandler stub) =>

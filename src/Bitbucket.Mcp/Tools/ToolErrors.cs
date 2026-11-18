@@ -264,7 +264,6 @@ internal static class ToolErrors
             409 => Conflict(detail),
             429 => RateLimited(exception, detail),
             DiffTooLargeStatus => DiffTooLarge(detail),
-            202 => Queued(detail),
             >= 500 => ServerError(exception, status, detail),
             _ => Other(status, detail),
         };
@@ -442,16 +441,6 @@ internal static class ToolErrors
 
         return message.ToString();
     }
-
-    /// <summary>
-    /// A merge Bitbucket queued instead of performing. The client already composed the advice (it
-    /// is the only place the task handle is visible), so this branch exists to keep the status out
-    /// of the generic 2xx-shaped hole rather than to add anything.
-    /// </summary>
-    private static string Queued(string? detail) =>
-        detail ?? "Bitbucket queued this merge as a background task instead of merging synchronously. " +
-        "This server does not poll merge tasks: check the pull request in the Bitbucket UI, and only " +
-        "re-run the merge if it did not complete.";
 
     private static string ServerError(BitbucketApiException exception, int status, string? detail)
     {

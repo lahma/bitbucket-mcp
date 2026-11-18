@@ -19,11 +19,24 @@ internal sealed record ReviewStatusResult
 /// <summary>The outcome of a merge.</summary>
 internal sealed record MergeResult
 {
-    /// <summary>The pull request's state after merging — <c>MERGED</c> on success.</summary>
+    /// <summary>
+    /// <c>MERGED</c> once the merge has landed. <c>QUEUED</c> while Bitbucket is still merging it
+    /// in the background or holding it in the destination branch's merge queue — the merge is under
+    /// way, and calling mergePullRequest again is not how to wait for it.
+    /// </summary>
     public string? State { get; init; }
 
     /// <summary>The merge commit hash, when Bitbucket reported one.</summary>
     public string? MergeCommitHash { get; init; }
+
+    /// <summary>The merge task Bitbucket is working on, while the state is <c>QUEUED</c>.</summary>
+    public string? TaskId { get; init; }
+
+    /// <summary>Whether the pull request is waiting in its destination branch's merge queue.</summary>
+    public bool? InMergeQueue { get; init; }
+
+    /// <summary>How to find out when a <c>QUEUED</c> merge lands; absent once it has.</summary>
+    public string? Next { get; init; }
 }
 
 /// <summary>The outcome of a decline.</summary>

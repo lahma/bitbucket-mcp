@@ -2,7 +2,6 @@ using System.Text.Json;
 
 using Bitbucket.Mcp.Configuration;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests;
 
@@ -53,7 +52,7 @@ public class PluginManifestTests
     /// canonical <c>SKILL.md</c> under <c>.claude/skills/</c> instead of a second copy. A plugin
     /// cannot reference files outside its own root, so any other source would force a duplicate.
     /// </summary>
-    [Fact]
+    [Test]
     public void TheMarketplaceListsThisRepositoryAsItsOnePlugin()
     {
         var root = FindRepositoryRoot();
@@ -61,17 +60,15 @@ public class PluginManifestTests
         using var marketplace = Read(root, MarketplacePath);
         using var plugin = Read(root, PluginPath);
 
-        Assert.Equal("bitbucket-mcp", marketplace.RootElement.GetProperty("name").GetString());
+        Assert.That(marketplace.RootElement.GetProperty("name").GetString(), Is.EqualTo("bitbucket-mcp"));
 
-        Assert.False(
-            string.IsNullOrWhiteSpace(marketplace.RootElement.GetProperty("owner").GetProperty("name").GetString()),
-            "A marketplace needs an owner name; users see it before they trust the source.");
+        Assert.That(string.IsNullOrWhiteSpace(marketplace.RootElement.GetProperty("owner").GetProperty("name").GetString()), Is.False, "A marketplace needs an owner name; users see it before they trust the source.");
 
         var entries = marketplace.RootElement.GetProperty("plugins").EnumerateArray().ToList();
-        var entry = Assert.Single(entries);
+        var entry = Expect.Single(entries);
 
-        Assert.Equal(plugin.RootElement.GetProperty("name").GetString(), entry.GetProperty("name").GetString());
-        Assert.Equal("./", entry.GetProperty("source").GetString());
+        Assert.That(entry.GetProperty("name").GetString(), Is.EqualTo(plugin.RootElement.GetProperty("name").GetString()));
+        Assert.That(entry.GetProperty("source").GetString(), Is.EqualTo("./"));
     }
 
     /// <summary>
@@ -79,14 +76,14 @@ public class PluginManifestTests
     /// plugin <c>version</c> is what Claude Code keys updates off: leave it behind and users are
     /// told they are already up to date.
     /// </summary>
-    [Fact]
+    [Test]
     public void ThePluginVersionIsTheVersionAuthority()
     {
         var root = FindRepositoryRoot();
 
         using var plugin = Read(root, PluginPath);
 
-        Assert.Equal(ReadChangelogVersion(root), plugin.RootElement.GetProperty("version").GetString());
+        Assert.That(plugin.RootElement.GetProperty("version").GetString(), Is.EqualTo(ReadChangelogVersion(root)));
     }
 
     /// <summary>
@@ -94,7 +91,7 @@ public class PluginManifestTests
     /// what the plugin runs without the plugin version changing — invisible to <c>/plugin update</c>,
     /// and able to pair this release's skill with a server that no longer matches it.
     /// </summary>
-    [Fact]
+    [Test]
     public void TheBundledServerIsPinnedToThatSameVersion()
     {
         var root = FindRepositoryRoot();
@@ -108,14 +105,14 @@ public class PluginManifestTests
             .Select(argument => argument.GetString())
             .ToList();
 
-        Assert.Contains($"{PackageId}@{version}", arguments);
+        Assert.That(arguments, Does.Contain($"{PackageId}@{version}"));
     }
 
     /// <summary>
     /// The manifest names the skill directory explicitly, because the plugin's source is the
     /// repository root and the default <c>skills/</c> scan would otherwise find nothing.
     /// </summary>
-    [Fact]
+    [Test]
     public void EveryDeclaredSkillPathResolvesToASkill()
     {
         var root = FindRepositoryRoot();
@@ -127,17 +124,15 @@ public class PluginManifestTests
             .Select(path => path.GetString()!)
             .ToList();
 
-        Assert.NotEmpty(paths);
+        Assert.That(paths, Is.Not.Empty);
 
         foreach (var path in paths)
         {
-            Assert.StartsWith("./", path, StringComparison.Ordinal);
+            Assert.That(path, Does.StartWith("./"));
 
             var skill = Path.Combine(root, path[2..].Replace('/', Path.DirectorySeparatorChar), "SKILL.md");
 
-            Assert.True(
-                File.Exists(skill),
-                $"{PluginPath} declares the skill path '{path}', which has no SKILL.md. The plugin would "
+            Assert.That(File.Exists(skill), Is.True, $"{PluginPath} declares the skill path '{path}', which has no SKILL.md. The plugin would "
                 + "install with no skill at all.");
         }
     }
@@ -147,7 +142,7 @@ public class PluginManifestTests
     /// each value has to reach a <c>userConfig</c> option that exists — an unresolved
     /// <c>${user_config.…}</c> is handed to the server as a literal credential.
     /// </summary>
-    [Fact]
+    [Test]
     public void EveryDocumentedCredentialIsPromptedForAndPassedThrough()
     {
         var root = FindRepositoryRoot();
@@ -177,17 +172,13 @@ public class PluginManifestTests
         // BITBUCKET_ACCESS_TOKEN would set that variable to "" in the child process and shadow a
         // value the user already had. With three auth mechanisms in a precedence chain, that does
         // not fail loudly — it silently demotes the caller to the next mechanism down.
-        Assert.Equal(
-            documented.Keys
+        Assert.That(passed.Keys.OrderBy(name => name, StringComparer.Ordinal), Is.EqualTo(documented.Keys
                 .Select(name => BitbucketMcpOptions.PluginOptionPrefix + name)
-                .OrderBy(name => name, StringComparer.Ordinal),
-            passed.Keys.OrderBy(name => name, StringComparer.Ordinal));
+                .OrderBy(name => name, StringComparer.Ordinal)));
 
         foreach (var name in documented.Keys)
         {
-            Assert.False(
-                passed.ContainsKey(name),
-                $"The manifest maps {name} directly. An unset option substitutes as the empty string, "
+            Assert.That(passed.ContainsKey(name), Is.False, $"The manifest maps {name} directly. An unset option substitutes as the empty string, "
                 + $"which would shadow a {name} the user already has in their environment (issue #4). "
                 + $"Map it to {BitbucketMcpOptions.PluginOptionPrefix}{name} instead.");
         }
@@ -196,23 +187,17 @@ public class PluginManifestTests
         {
             var placeholder = passed[BitbucketMcpOptions.PluginOptionPrefix + name];
 
-            Assert.True(
-                placeholder.StartsWith("${user_config.", StringComparison.Ordinal)
-                && placeholder.EndsWith('}'),
-                $"{name} is passed as '{placeholder}', which is a literal, not a configured value.");
+            Assert.That(placeholder.StartsWith("${user_config.", StringComparison.Ordinal)
+                && placeholder.EndsWith('}'), Is.True, $"{name} is passed as '{placeholder}', which is a literal, not a configured value.");
 
             var key = placeholder["${user_config.".Length..^1];
 
-            Assert.True(
-                options.TryGetProperty(key, out var option),
-                $"{name} substitutes '{key}', which no userConfig option declares. The server would receive "
+            Assert.That(options.TryGetProperty(key, out var option), Is.True, $"{name} substitutes '{key}', which no userConfig option declares. The server would receive "
                 + "the placeholder text as its credential.");
 
             var sensitive = option.TryGetProperty("sensitive", out var flag) && flag.GetBoolean();
 
-            Assert.True(
-                sensitive == isSecret,
-                $"{name} is {(isSecret ? "secret" : "not secret")} in {ServerManifestPath} but "
+            Assert.That(sensitive == isSecret, Is.True, $"{name} is {(isSecret ? "secret" : "not secret")} in {ServerManifestPath} but "
                 + $"{(sensitive ? "sensitive" : "not sensitive")} in {PluginPath}. A secret that is not marked "
                 + "sensitive is written to settings.json in the clear.");
         }
@@ -226,7 +211,7 @@ public class PluginManifestTests
     {
         var servers = plugin.RootElement.GetProperty("mcpServers").EnumerateObject().ToList();
 
-        Assert.Single(servers);
+        Assert.That(servers, Has.Exactly(1).Items);
         return servers[0].Value;
     }
 
@@ -235,7 +220,7 @@ public class PluginManifestTests
     {
         var first = File.ReadLines(Path.Combine(root, ChangelogPath)).First().Trim();
 
-        Assert.StartsWith("# ", first, StringComparison.Ordinal);
+        Assert.That(first, Does.StartWith("# "));
         return first[2..].Trim();
     }
 

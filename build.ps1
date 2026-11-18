@@ -22,6 +22,11 @@ $DotNetChannel = "STS"
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = 1
 $env:DOTNET_NOLOGO = 1
 
+# .NET 11+ SDKs are tar.gz by default, and Windows tar refuses to extract through a symlinked
+# install path ("too many symbolic link levels"). This makes dotnet-install.ps1 fetch the zip
+# instead. Mirrors Fallout 10.5.0's own bootstrapper template (Fallout-build/Fallout#730).
+$env:DOTNET_INSTALL_SKIP_TAR = "1"
+
 ###########################################################################
 # EXECUTION
 ###########################################################################

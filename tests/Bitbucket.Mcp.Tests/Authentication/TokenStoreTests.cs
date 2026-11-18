@@ -4,7 +4,6 @@ using System.Text;
 using Bitbucket.Mcp.Authentication;
 using Bitbucket.Mcp.Configuration;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Authentication;
 
@@ -16,7 +15,7 @@ namespace Bitbucket.Mcp.Tests.Authentication;
 /// </summary>
 public sealed class TokenStoreTests
 {
-    [Fact]
+    [Test]
     public void FilePathsComeFromTheConfiguredOverride()
     {
         using var temp = new TempTokenDirectory();
@@ -25,42 +24,42 @@ public sealed class TokenStoreTests
             new BitbucketMcpOptions { TokenFilePath = temp.TokenFilePath },
             AuthTestSupport.Loggers);
 
-        Assert.Equal(temp.TokenFilePath, store.FilePath);
-        Assert.Equal(temp.DirectoryPath, store.DirectoryPath);
-        Assert.Equal(temp.LockFilePath, store.LockFilePath);
-        Assert.Equal("tokens.lock", Path.GetFileName(store.LockFilePath));
+        Assert.That(store.FilePath, Is.EqualTo(temp.TokenFilePath));
+        Assert.That(store.DirectoryPath, Is.EqualTo(temp.DirectoryPath));
+        Assert.That(store.LockFilePath, Is.EqualTo(temp.LockFilePath));
+        Assert.That(Path.GetFileName(store.LockFilePath), Is.EqualTo("tokens.lock"));
     }
 
-    [Fact]
+    [Test]
     public void OverrideIsResolvedToAnAbsolutePathAndTrimmed()
     {
         var resolved = TokenStore.ResolveTokenFilePath("  relative-tokens.json  ");
 
-        Assert.True(Path.IsPathFullyQualified(resolved), $"'{resolved}' should be fully qualified.");
-        Assert.Equal("relative-tokens.json", Path.GetFileName(resolved));
+        Assert.That(Path.IsPathFullyQualified(resolved), Is.True, $"'{resolved}' should be fully qualified.");
+        Assert.That(Path.GetFileName(resolved), Is.EqualTo("relative-tokens.json"));
     }
 
-    [Fact]
+    [Test]
     public void ConstructionTouchesNoDisk()
     {
         using var temp = new TempTokenDirectory();
 
         _ = new TokenStore(new BitbucketMcpOptions { TokenFilePath = temp.TokenFilePath }, AuthTestSupport.Loggers);
 
-        Assert.False(Directory.Exists(temp.DirectoryPath), "Constructing the store must not create its directory.");
+        Assert.That(Directory.Exists(temp.DirectoryPath), Is.False, "Constructing the store must not create its directory.");
     }
 
-    [Fact]
+    [Test]
     public async Task MissingCacheLoadsAsNothing()
     {
         using var temp = new TempTokenDirectory();
 
         var store = AuthTestSupport.StoreFor(temp.TokenFilePath);
 
-        Assert.Null(await store.LoadAsync(TestContext.Current.CancellationToken));
+        Assert.That(await store.LoadAsync(TestContext.CurrentContext.CancellationToken), Is.Null);
     }
 
-    [Fact]
+    [Test]
     public async Task SaveThenLoadRoundTripsEveryField()
     {
         using var temp = new TempTokenDirectory();
@@ -73,21 +72,21 @@ public sealed class TokenStoreTests
             refreshToken: "refresh-current",
             previousRefreshToken: "refresh-previous");
 
-        await store.SaveAsync(saved, TestContext.Current.CancellationToken);
+        await store.SaveAsync(saved, TestContext.CurrentContext.CancellationToken);
 
-        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(loaded);
-        Assert.Equal(TokenSet.CurrentVersion, loaded.Version);
-        Assert.Equal(saved.ConsumerKeyFingerprint, loaded.ConsumerKeyFingerprint);
-        Assert.Equal("access-token-value", loaded.AccessToken);
-        Assert.Equal(saved.ExpiresAtUtc, loaded.ExpiresAtUtc);
-        Assert.Equal("refresh-current", loaded.RefreshToken);
-        Assert.Equal("refresh-previous", loaded.PreviousRefreshToken);
-        Assert.Equal(saved.Scopes, loaded.Scopes);
+        Assert.That(loaded, Is.Not.Null);
+        Assert.That(loaded.Version, Is.EqualTo(TokenSet.CurrentVersion));
+        Assert.That(loaded.ConsumerKeyFingerprint, Is.EqualTo(saved.ConsumerKeyFingerprint));
+        Assert.That(loaded.AccessToken, Is.EqualTo("access-token-value"));
+        Assert.That(loaded.ExpiresAtUtc, Is.EqualTo(saved.ExpiresAtUtc));
+        Assert.That(loaded.RefreshToken, Is.EqualTo("refresh-current"));
+        Assert.That(loaded.PreviousRefreshToken, Is.EqualTo("refresh-previous"));
+        Assert.That(loaded.Scopes, Is.EqualTo(saved.Scopes));
     }
 
-    [Fact]
+    [Test]
     public async Task SaveStampsTheCurrentLayoutVersionEvenWhenTheCallerDidNot()
     {
         using var temp = new TempTokenDirectory();
@@ -96,12 +95,12 @@ public sealed class TokenStoreTests
 
         await store.SaveAsync(
             AuthTestSupport.TokenSetFor("access", TestTimeProvider.DefaultNow) with { Version = 0 },
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(loaded);
-        Assert.Equal(TokenSet.CurrentVersion, loaded.Version);
+        Assert.That(loaded, Is.Not.Null);
+        Assert.That(loaded.Version, Is.EqualTo(TokenSet.CurrentVersion));
     }
 
     /// <summary>
@@ -109,7 +108,7 @@ public sealed class TokenStoreTests
     /// must still read as. It is asserted by hand rather than through <c>SaveAsync</c> because on
     /// Windows that would produce a DPAPI envelope instead.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PlainEnvelopeLoadsOnEveryPlatform()
     {
         using var temp = new TempTokenDirectory();
@@ -123,20 +122,24 @@ public sealed class TokenStoreTests
         await File.WriteAllTextAsync(
             temp.TokenFilePath,
             $$"""{"scheme":"plain","payload":"{{payload}}"}""",
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var loaded = await AuthTestSupport.StoreFor(temp.TokenFilePath).LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await AuthTestSupport.StoreFor(temp.TokenFilePath).LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(loaded);
-        Assert.Equal("plain-access", loaded.AccessToken);
-        Assert.Equal("plain-refresh", loaded.RefreshToken);
-        Assert.Equal("abc", loaded.ConsumerKeyFingerprint);
+        Assert.That(loaded, Is.Not.Null);
+        Assert.That(loaded.AccessToken, Is.EqualTo("plain-access"));
+        Assert.That(loaded.RefreshToken, Is.EqualTo("plain-refresh"));
+        Assert.That(loaded.ConsumerKeyFingerprint, Is.EqualTo("abc"));
     }
 
-    [Fact]
+    [Test]
     public async Task WindowsCacheIsDpapiProtectedAndHidesTheAccessToken()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "DPAPI exists on Windows only.");
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("DPAPI exists on Windows only.");
+            return;
+        }
 
         using var temp = new TempTokenDirectory();
 
@@ -146,23 +149,23 @@ public sealed class TokenStoreTests
 
         await store.SaveAsync(
             AuthTestSupport.TokenSetFor(AccessToken, TestTimeProvider.DefaultNow, refreshToken: "windows-secret-refresh"),
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        var envelope = await AuthTestSupport.ReadEnvelopeAsync(temp.TokenFilePath, TestContext.Current.CancellationToken);
+        var envelope = await AuthTestSupport.ReadEnvelopeAsync(temp.TokenFilePath, TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal("dpapi", envelope.Scheme);
+        Assert.That(envelope.Scheme, Is.EqualTo("dpapi"));
 
-        var fileText = await File.ReadAllTextAsync(temp.TokenFilePath, TestContext.Current.CancellationToken);
+        var fileText = await File.ReadAllTextAsync(temp.TokenFilePath, TestContext.CurrentContext.CancellationToken);
         var payload = Encoding.UTF8.GetString(Convert.FromBase64String(envelope.Payload));
 
-        Assert.DoesNotContain(AccessToken, fileText, StringComparison.Ordinal);
-        Assert.DoesNotContain(AccessToken, payload, StringComparison.Ordinal);
-        Assert.DoesNotContain("windows-secret-refresh", payload, StringComparison.Ordinal);
+        Assert.That(fileText, Does.Not.Contain(AccessToken));
+        Assert.That(payload, Does.Not.Contain(AccessToken));
+        Assert.That(payload, Does.Not.Contain("windows-secret-refresh"));
 
-        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(loaded);
-        Assert.Equal(AccessToken, loaded.AccessToken);
+        Assert.That(loaded, Is.Not.Null);
+        Assert.That(loaded.AccessToken, Is.EqualTo(AccessToken));
     }
 
     /// <summary>
@@ -170,7 +173,7 @@ public sealed class TokenStoreTests
     /// litter the directory — and a leftover <c>.tmp</c> would mean a crash could leave the real
     /// file half written.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task RepeatedSavesLeaveExactlyOneFileAndNoTemporaries()
     {
         using var temp = new TempTokenDirectory();
@@ -183,16 +186,16 @@ public sealed class TokenStoreTests
                 AuthTestSupport.TokenSetFor(
                     $"access-{i.ToString(CultureInfo.InvariantCulture)}",
                     TestTimeProvider.DefaultNow),
-                TestContext.Current.CancellationToken);
+                TestContext.CurrentContext.CancellationToken);
         }
 
-        Assert.Equal(temp.TokenFilePath, Assert.Single(Directory.GetFiles(temp.DirectoryPath)));
-        Assert.Empty(Directory.GetFiles(temp.DirectoryPath, "*.tmp"));
+        Assert.That(Expect.Single(Directory.GetFiles(temp.DirectoryPath)), Is.EqualTo(temp.TokenFilePath));
+        Assert.That(Directory.GetFiles(temp.DirectoryPath, "*.tmp"), Is.Empty);
 
-        var loaded = await store.LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await store.LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(loaded);
-        Assert.Equal("access-4", loaded.AccessToken);
+        Assert.That(loaded, Is.Not.Null);
+        Assert.That(loaded.AccessToken, Is.EqualTo("access-4"));
     }
 
     /// <summary>
@@ -201,48 +204,47 @@ public sealed class TokenStoreTests
     /// None of them may throw — the recovery is a sign-in, and a throw here would turn a
     /// recoverable state into a dead server.
     /// </summary>
-    [Theory]
-    [InlineData("", "an empty file")]
-    [InlineData("   ", "whitespace only")]
-    [InlineData("this is not json", "not JSON at all")]
-    [InlineData("{\"scheme\":\"plain\",\"payload\":", "truncated JSON")]
-    [InlineData("""{"payload":"e30="}""", "no scheme")]
-    [InlineData("""{"scheme":"plain"}""", "no payload")]
-    [InlineData("""{"scheme":"plain","payload":""}""", "an empty payload")]
-    [InlineData("""{"scheme":"plain","payload":"not-base-64!!"}""", "a payload that is not base64")]
-    [InlineData("""{"scheme":"tomorrow","payload":"e30="}""", "an unknown protection scheme")]
-    [InlineData("""{"scheme":"plain","payload":"bm90IGpzb24="}""", "a payload that is not JSON")]
-    [InlineData("""{"scheme":"plain","payload":"e30="}""", "a payload from another layout version")]
-    [InlineData("""{"scheme":"dpapi","payload":"e30="}""", "a DPAPI payload this account cannot decrypt")]
+    [TestCase("", "an empty file")]
+    [TestCase("   ", "whitespace only")]
+    [TestCase("this is not json", "not JSON at all")]
+    [TestCase("{\"scheme\":\"plain\",\"payload\":", "truncated JSON")]
+    [TestCase("""{"payload":"e30="}""", "no scheme")]
+    [TestCase("""{"scheme":"plain"}""", "no payload")]
+    [TestCase("""{"scheme":"plain","payload":""}""", "an empty payload")]
+    [TestCase("""{"scheme":"plain","payload":"not-base-64!!"}""", "a payload that is not base64")]
+    [TestCase("""{"scheme":"tomorrow","payload":"e30="}""", "an unknown protection scheme")]
+    [TestCase("""{"scheme":"plain","payload":"bm90IGpzb24="}""", "a payload that is not JSON")]
+    [TestCase("""{"scheme":"plain","payload":"e30="}""", "a payload from another layout version")]
+    [TestCase("""{"scheme":"dpapi","payload":"e30="}""", "a DPAPI payload this account cannot decrypt")]
     public async Task DamagedCacheReadsBackAsSignedOut(string content, string description)
     {
         using var temp = new TempTokenDirectory();
         temp.Create();
 
-        await File.WriteAllTextAsync(temp.TokenFilePath, content, TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(temp.TokenFilePath, content, TestContext.CurrentContext.CancellationToken);
 
-        var loaded = await AuthTestSupport.StoreFor(temp.TokenFilePath).LoadAsync(TestContext.Current.CancellationToken);
+        var loaded = await AuthTestSupport.StoreFor(temp.TokenFilePath).LoadAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(loaded is null, $"A token cache with {description} must load as null.");
+        Assert.That(loaded is null, Is.True, $"A token cache with {description} must load as null.");
     }
 
-    [Fact]
+    [Test]
     public async Task DeleteReportsWhetherItRemovedAnythingAndIsIdempotent()
     {
         using var temp = new TempTokenDirectory();
 
         var store = AuthTestSupport.StoreFor(temp.TokenFilePath);
 
-        Assert.False(await store.DeleteAsync(TestContext.Current.CancellationToken));
+        Assert.That(await store.DeleteAsync(TestContext.CurrentContext.CancellationToken), Is.False);
 
         await store.SaveAsync(
             AuthTestSupport.TokenSetFor("access", TestTimeProvider.DefaultNow),
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(await store.DeleteAsync(TestContext.Current.CancellationToken));
-        Assert.False(await store.DeleteAsync(TestContext.Current.CancellationToken));
-        Assert.False(File.Exists(temp.TokenFilePath));
-        Assert.Null(await store.LoadAsync(TestContext.Current.CancellationToken));
+        Assert.That(await store.DeleteAsync(TestContext.CurrentContext.CancellationToken), Is.True);
+        Assert.That(await store.DeleteAsync(TestContext.CurrentContext.CancellationToken), Is.False);
+        Assert.That(File.Exists(temp.TokenFilePath), Is.False);
+        Assert.That(await store.LoadAsync(TestContext.CurrentContext.CancellationToken), Is.Null);
     }
 
     /// <summary>
@@ -250,7 +252,7 @@ public sealed class TokenStoreTests
     /// clock auto-advances so the ten-second timeout is reached in milliseconds rather than in
     /// wall-clock seconds.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task LockIsExclusiveUntilItIsReleased()
     {
         using var temp = new TempTokenDirectory();
@@ -258,18 +260,18 @@ public sealed class TokenStoreTests
         var clock = new TestTimeProvider { AutoAdvance = TimeSpan.FromSeconds(5) };
         var store = AuthTestSupport.StoreFor(temp.TokenFilePath, clock);
 
-        var held = await store.AcquireLockAsync(TestContext.Current.CancellationToken);
+        var held = await store.AcquireLockAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(held);
+        Assert.That(held, Is.Not.Null);
 
         // Contended: the second attempt must give up and report it rather than proceed silently.
-        Assert.Null(await store.AcquireLockAsync(TestContext.Current.CancellationToken));
+        Assert.That(await store.AcquireLockAsync(TestContext.CurrentContext.CancellationToken), Is.Null);
 
         await held.DisposeAsync();
 
-        var reacquired = await store.AcquireLockAsync(TestContext.Current.CancellationToken);
+        var reacquired = await store.AcquireLockAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(reacquired);
+        Assert.That(reacquired, Is.Not.Null);
 
         await reacquired.DisposeAsync();
     }
@@ -278,30 +280,30 @@ public sealed class TokenStoreTests
     /// Releasing the lock must not delete the file: a waiter that already opened the doomed name
     /// and a newcomer that creates a fresh one would both believe they hold the lock.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task LockFileSurvivesRelease()
     {
         using var temp = new TempTokenDirectory();
 
         var store = AuthTestSupport.StoreFor(temp.TokenFilePath);
 
-        var held = await store.AcquireLockAsync(TestContext.Current.CancellationToken);
+        var held = await store.AcquireLockAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(held);
-        Assert.True(File.Exists(temp.LockFilePath));
+        Assert.That(held, Is.Not.Null);
+        Assert.That(File.Exists(temp.LockFilePath), Is.True);
 
         held.Dispose();
 
-        Assert.True(File.Exists(temp.LockFilePath), "The lock file is deliberately left behind on release.");
+        Assert.That(File.Exists(temp.LockFilePath), Is.True, "The lock file is deliberately left behind on release.");
     }
 
-    [Fact]
+    [Test]
     public async Task UnixPermissionsRestrictTheCacheToItsOwner()
     {
         if (OperatingSystem.IsWindows())
         {
             // Windows has no file modes; %LOCALAPPDATA%'s ACLs plus DPAPI stand in for them.
-            Assert.Skip("Unix file modes do not apply on Windows.");
+            Assert.Ignore("Unix file modes do not apply on Windows.");
             return;
         }
 
@@ -311,18 +313,16 @@ public sealed class TokenStoreTests
 
         await store.SaveAsync(
             AuthTestSupport.TokenSetFor("access", TestTimeProvider.DefaultNow),
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(temp.TokenFilePath));
+        Assert.That(File.GetUnixFileMode(temp.TokenFilePath), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
 
-        Assert.Equal(
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
-            File.GetUnixFileMode(temp.DirectoryPath));
+        Assert.That(File.GetUnixFileMode(temp.DirectoryPath), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
 
-        var held = await store.AcquireLockAsync(TestContext.Current.CancellationToken);
+        var held = await store.AcquireLockAsync(TestContext.CurrentContext.CancellationToken);
 
-        Assert.NotNull(held);
-        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(temp.LockFilePath));
+        Assert.That(held, Is.Not.Null);
+        Assert.That(File.GetUnixFileMode(temp.LockFilePath), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
 
         await held.DisposeAsync();
     }
