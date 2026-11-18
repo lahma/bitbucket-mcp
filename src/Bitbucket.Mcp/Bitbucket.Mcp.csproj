@@ -16,42 +16,44 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <!-- D17: the NuGet convenience channel. `dotnet pack` produces a framework-dependent .NET tool
-       package (`dnx bitbucket-mcp`); the Native AOT single binary published to GitHub Releases
-       stays the recommended way to run the server. PackageType McpServer is what nuget.org filters
-       on to show the MCP tab and generate client configuration; PackAsTool already makes it a tool
-       package, so DotnetTool is deliberately NOT listed alongside it (the mcpserver template does
-       the same). -->
+  <!-- D17: the NuGet channel, `dnx bitbucket-mcp`. It delivers the same Native AOT binary as the
+       GitHub Releases, as RID-specific tool packages: `dotnet pack` builds the pointer package, which
+       names one package per RID below; `dotnet pack -r <rid>` builds each of those on a runner of
+       that OS (Native AOT does not cross-compile across operating systems); and `dotnet pack -r any
+       -p:PublishAot=false` builds the framework-dependent fallback for every other platform.
+       PackageType McpServer is what nuget.org filters on to show the MCP tab and generate client
+       configuration; PackAsTool already makes it a tool package, so DotnetTool is deliberately NOT
+       listed alongside it (the mcpserver template does the same). The SDK types the RID packages
+       DotnetToolRidPackage instead, so only the pointer carries McpServer - which matters, because
+       nuget.org refuses a McpServer package that is not also a DotnetTool. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
     <PackageType>McpServer</PackageType>
     <PackageId>bitbucket-mcp</PackageId>
     <ToolCommandName>bitbucket-mcp</ToolCommandName>
-    <!-- The tool half is framework-dependent, so it must keep working on a runtime newer than the
-         one it was built against. -->
+    <!-- The `any` fallback package is framework-dependent, so it must keep working on a runtime
+         newer than the one it was built against. -->
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>mcp;mcp-server;model-context-protocol;bitbucket;bitbucket-cloud;pull-request;code-review;ai;stdio</PackageTags>
-    <Description>Model Context Protocol server for Bitbucket Cloud pull requests - list, read, diff, comment, review, merge and decline - with OAuth 2.0 browser login and a deliberately small, auditable dependency tree. Native AOT binaries are published to GitHub Releases; this package is the `dnx bitbucket-mcp` convenience channel.</Description>
+    <Description>Model Context Protocol server for Bitbucket Cloud pull requests - list, read, diff, comment, review, merge and decline - with OAuth 2.0 browser login and a deliberately small, auditable dependency tree. `dnx bitbucket-mcp` runs the Native AOT binary on Windows, Linux and macOS (x64 and Arm64 where built) and a framework-dependent build elsewhere; the same binaries are on GitHub Releases.</Description>
   </PropertyGroup>
 
-  <!-- PackTool.targets packs $(PublishDir), so `dotnet pack` runs a publish of this project. Left
-       alone that publish would inherit PublishAot=true above and fail for want of a RuntimeIdentifier
-       (D9 keeps RIDs out of the csproj). The AOT publish always passes -r, so keying the property off
-       RuntimeIdentifier gives the release path AOT and the pack path a portable IL tool. -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
-    <PublishAot>false</PublishAot>
-  </PropertyGroup>
-
-  <!-- The three analyzers above are what turn an AOT-hostile line of code (IL2026, IL3050) into a
-       build error under TreatWarningsAsErrors. The SDK derives them from PublishAot, so leaving
-       them implicit would switch them off for every RID-less build - which is every `dotnet build`,
-       every `dotnet test` and every IDE session. Stated explicitly, they no longer depend on it. -->
+  <!-- The RIDs the pointer package names: exactly the release matrix's five legs (ToolPackageTests
+       keeps the two lists equal), plus `any` for the framework-dependent fallback. Not
+       RuntimeIdentifiers (D9): this property only shapes the tool packages and restores nothing per
+       RID. With it set, a RID-less `dotnet pack` builds the pointer alone, so PublishAot stays true
+       for every build and the AOT analyzers with it; only the fallback's pack turns it off. The one
+       cost is that a restore brings the ILCompiler pack of the host's own RID - the one a local
+       SmokeTest needs anyway - and never another's. A
+       published tool needs neither symbols nor the XML docs, and Native AOT's symbols alone are about
+       100 MB on Windows, so neither is copied to publish output - the archives never shipped them
+       either. -->
   <PropertyGroup>
-    <EnableAotAnalyzer>true</EnableAotAnalyzer>
-    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
-    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <ToolPackageRuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-arm64;any</ToolPackageRuntimeIdentifiers>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

@@ -27,6 +27,7 @@ env:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 jobs:
   ubuntu-latest:
@@ -45,6 +46,8 @@ jobs:
         run: dotnet tool restore
       - name: 'Run: Compile, Test, Pack, Publish, PublishMcpRegistry'
         run: dotnet fallout Compile Test Pack Publish PublishMcpRegistry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: 'Publish: packages'
         uses: actions/upload-artifact@v7
         with:

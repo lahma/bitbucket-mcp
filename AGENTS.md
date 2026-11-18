@@ -49,7 +49,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D6 | Our `JsonSerializerContext` goes **first** in `TypeInfoResolverChain`, the SDK resolver second (first-match-wins; ours-first guarantees identical JIT and AOT behavior). |
 | D7 | `JsonSerializerIsReflectionEnabledByDefault=false` in the server **and** the test csproj — a missing `[JsonSerializable]` then fails in `dotnet test`, not only after an AOT publish. |
 | D8 | **Static tool methods**; `BitbucketApiClient` as a plain parameter (DI-bound via `IServiceProviderIsService`, excluded from the schema); avoids per-call instance activation and is directly unit-testable. |
-| D9 | No `RuntimeIdentifiers` in the csproj (would pull ILCompiler packs per RID on every restore); the RID list lives in `Build.cs` and the release matrix, and reaches publish via `-r`. |
+| D9 | No `RuntimeIdentifiers` in the csproj (would pull ILCompiler packs per RID on every restore); the RID list lives in `Build.cs` and the release matrix, and reaches publish via `-r`. `ToolPackageRuntimeIdentifiers` (D17) is not that property: it only shapes the tool packages and restores nothing per RID. What a restore does bring since `PublishAot` is true for every build is the ILCompiler pack of the host's own RID — two packages, the ones a local `SmokeTest` needs anyway — and never another RID's. |
 | D10 | No `PublishSingleFile` (ignored under AOT). |
 | D11 | **NUnit 5 on Microsoft.Testing.Platform (MTP), run by a hand-written `Test` target.** `global.json` selects MTP for `dotnet test`, and `NUnit3TestAdapter` is the runner through `EnableNUnitRunner`. MTP's `dotnet test` is a different command line from VSTest's — `--project` instead of a positional path, no `--logger`, no TRX by default — and Fallout's `ITest` generates only the VSTest one (Fallout-build/Fallout#674, open), so `Build.cs` owns `Test` instead of taking it from Fallout.Components. On GitHub Actions it adds `--report-github` (`GitHubActionsTestLogger`), which annotates each failing test at its file and line and writes a job summary of the failures — the reporting the VSTest bridge was kept for, and which this repository never actually had, since nothing referenced the logger. Two assembly attributes in `TestAssembly.cs` keep the contract the suite was written for under xunit: a fresh fixture instance per test case, and fixtures in parallel. The test project runs with `InvariantGlobalization` like the server, which also makes NUnit's string constraints — culture-sensitive by default — ordinal. Revisit the hand-written target when Fallout speaks MTP. |
 | D12 | OAuth loopback callback via a raw **`TcpListener`** bound to both `127.0.0.1` and `::1` (~60 auditable lines, no `HttpListener` platform quirks). |
@@ -57,13 +57,13 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D14 | Access-token lifetime always taken from `expires_in` (minus 60 s skew) — never hard-coded; Atlassian's docs contradict themselves (1 h vs 2 h). |
 | D15 | **`login` / `logout` / `status` CLI modes** on the same binary (argv dispatch, hand-rolled parsing); no args = stdio server. CLI mode may use stdout; server mode never. |
 | D16 | **Redirects are followed by hand, not by the transport.** `SocketsHttpHandler` strips the `Authorization` header on **all** automatic redirects, same-origin included, and does not re-apply a default header to the redirected request either (verified 2026-08-09 against live Bitbucket and a local echo server — the diff and diffstat endpoints `302` to another path on `api.bitbucket.org` whose target still needs the credential, so the redirected request came back `404`). The transport therefore sets `AllowAutoRedirect=false` and `AuthenticationHandler` follows redirects itself: `GET`/`HEAD` only (never replay a request with content), 301/302/303/307/308, at most 5 hops, relative `Location` resolved against the current URI, and the credential re-attached **only** when the target is `https` on `api.bitbucket.org` — a redirect anywhere else is followed anonymously. |
-| D17 | **NuGet is a second distribution channel, not the primary one.** `dotnet pack` produces `bitbucket-mcp`, a framework-dependent .NET tool package (`PackAsTool`) carrying `PackageType=McpServer` and an embedded `.mcp/server.json`, so `dnx bitbucket-mcp@{version}` works without a download step; the Native AOT binaries stay the recommended way to run the server. It is pushed by **trusted publishing** — the workflow exchanges its GitHub OIDC token for an API key that lives minutes — so no NuGet API key exists in the repository or in GitHub secrets. The exchange is **C# inside the build** (`build/Build.Publish.cs`), not the `NuGet/login` marketplace action: it is auditable alongside everything else and adds no third-party action to the release path. It has its **own generated workflow file**, `.github/workflows/publish.yml`, triggered by `v*.*.*` tags only, because a nuget.org policy is scoped by workflow *file name* and the nuget.org UI has no branch or tag filter — a one-job workflow that only a tag can start is the smallest thing that can hold the capability, and `build.yml` cannot mint a key because it is not the file named in the policy. GitHub environment `nuget` (deployment branch policy: tags `v*`) adds a second claim the policy matches on. |
+| D17 | **NuGet is a second distribution channel, and it ships the same Native AOT binary.** `dnx bitbucket-mcp@{version}` resolves `bitbucket-mcp`, a *pointer* tool package (`PackAsTool`, `PackageType=McpServer`, an embedded `.mcp/server.json`) that names one RID-specific package per release leg — `bitbucket-mcp.<rid>`, each holding that leg's Native AOT binary — and `bitbucket-mcp.any`, a framework-dependent fallback for every other platform; the CLI fetches the one for the user's platform. Measured 2026-11-18 on win-x64 through `dnx` with a warm cache, `initialize` + `tools/list` fell from about 570 ms (1.3.1, framework-dependent) to about 325 ms. Native AOT does not cross-compile across operating systems, so each RID package is packed and handshaken by its own `release.yml` leg (`PackRuntime`), and `publish.yml` collects them from the same tag's run (`CollectRuntimePackages`) and pushes every RID package before the pointer, so a pointer is never live before what it names. That **couples the two workflows, one way only**: `publish.yml` waits for `release.yml`'s artifacts and a failed leg stops the push — rightly, since a pointer naming a package that was never pushed is an install that fails — while `release.yml` never waits for `publish.yml`, so a nuget.org outage still cannot hold up the GitHub Release. It is pushed by **trusted publishing** — the workflow exchanges its GitHub OIDC token for an API key that lives minutes — so no NuGet API key exists in the repository or in GitHub secrets. The exchange is **C# inside the build** (`build/Build.Publish.cs`), not the `NuGet/login` marketplace action: it is auditable alongside everything else and adds no third-party action to the release path. It has its **own generated workflow file**, `.github/workflows/publish.yml`, triggered by `v*.*.*` tags only, because a nuget.org policy is scoped by workflow *file name* and the nuget.org UI has no branch or tag filter — a one-job workflow that only a tag can start is the smallest thing that can hold the capability, and `build.yml` cannot mint a key because it is not the file named in the policy. GitHub environment `nuget` (deployment branch policy: tags `v*`) adds a second claim the policy matches on. |
 | D18 | **A state-only `updatePullRequest` retries once with the pull request's own title.** Bitbucket documents `PUT /pullrequests/{id}` as a partial update but publishes no example without a `title`, and answers `400` to some bodies that name none. `SendUpdateAsync` catches exactly that combination — a 400 on a body with no title — fetches the pull request and resends with its existing title. `UpdateTaskAsync` does the same for a state-only task update. The cost is a last-write-wins window between the read and the resend, accepted because the alternative is a call that simply fails. |
 | D19 | **Pipeline logs are read tail-first, over a byte `Range`, and reduced while streaming.** A step runs under `set -e`, so the failure is the last thing printed; the tool asks for a suffix range and gets the log's full size back in `Content-Range` for free, which is what makes truncation quantified rather than merely flagged. Storage that ignores the header is handled by streaming into a fixed byte ring instead, so memory is bounded by the budget and never by the log; a `416` retries once unranged onto that same path. `HEAD` is never used — the presigned URL is signed for `GET` and answers 403. `pattern` is a literal substring, never a regular expression: the argument comes from a model, and backtracking over a multi-megabyte log is a denial of service against the server that fetched it. Verified against live storage 2026-09-09, including that ranged responses are not compressed. |
 | D20 | **The pipeline surface is read-only, and 403s are scope-aware per tool.** Running or stopping a pipeline needs `pipeline:write` on top of the read scope and spends build minutes; the problem being solved is diagnosis. Reading pipelines needs `pipeline` / `read:pipeline:bitbucket`, which **no existing user's credential has**, so `ToolCallContext` carries a `ToolScope` and `ToolErrors.Forbidden` branches on it: the pipeline message names that scope in both vocabularies, names the `logout`/`login` step (widening a consumer does not widen a cached grant), and offers `listCodeInsights` as a fallback. The pull-request branch is byte-identical to what it was, so nobody else's 403 grew a line. |
 | D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. | |
 | D22 | **The plugin manifest writes to `CLAUDE_PLUGIN_OPTION_*`, never to the plain variable names.** A Claude Code manifest maps every declared option into the server's environment through a `${user_config.X}` placeholder, and an option the user never filled in substitutes as the **empty string** rather than being omitted — so mapping it onto `BITBUCKET_ACCESS_TOKEN` set that variable to `""` in the child process and shadowed a value the user already had ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). With three auth mechanisms in a precedence chain the failure was silent: it demoted the caller to the next mechanism, or off the end of the chain into a browser sign-in nobody asked for. `BitbucketMcpOptions.ReadConfigured` therefore reads the prefixed name first, blank treated as absent, falling back to the plain one; a filled prompt still wins and a blank one changes nothing. `${user_config.KEY:-fallback}` is **not** an alternative — the substituter's capture group is `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, is undefined, and throws, and the plugin fails to load. `PluginManifestTests` fails if the manifest is ever mapped back.
-| D23 | **The target framework stays `net10.0` (LTS) through .NET 11.** Measured 2026-11-18 on SDK 10.0.404 and 11.0.100: `net11.0` grows the win-x64 AOT binary 2% (all of it runtime), leaves startup unchanged, and ends support the same month (2028-11). Its one gain — the server's restore graph falling from 21 packages to 12, because .NET 11 moved `Microsoft.Extensions.*.Abstractions`, `Options` and `Primitives` into the shared framework — exists only with `net11.0` *alone*, and `net11.0` alone breaks `dnx` (and with it the Claude Code plugin) for anyone without the .NET 11 runtime; carrying `net10.0` as well keeps the old graph. It needs no `NuGet.Frameworks` pin in `build/`: that pin was load-bearing only while Fallout's `ITest` evaluated test projects in-process, and the hand-written `Test` target (D11) does not — SDK 11.0.100 with `net11.0` runs the simulated CI `Test` green without it (2026-11-18). Revisit at .NET 12 LTS, or when RID-specific AOT tool packages decouple `dnx` from the installed runtime. |
+| D23 | **The target framework stays `net10.0` (LTS) through .NET 11.** Measured 2026-11-18 on SDK 10.0.404 and 11.0.100: `net11.0` grows the win-x64 AOT binary 2% (all of it runtime), leaves startup unchanged, and ends support the same month (2028-11). Its one gain is the server's restore graph falling from 21 packages to 12, because .NET 11 moved `Microsoft.Extensions.*.Abstractions`, `Options` and `Primitives` into the shared framework — and only with `net11.0` *alone*; carrying `net10.0` as well keeps the old graph. Revisited the same day, once the RID-specific packages (D17) existed: a .NET 10 SDK's `dnx` installs and runs a `net11.0` RID package, whose binary sits under `tools/any/<rid>/` with no framework in its path, so `net11.0` alone no longer breaks `dnx` (or the Claude Code plugin) on the five native platforms. Two costs remain: the `any` fallback would need the .NET 11 runtime everywhere else, and SDK 11 changes what `Pack` does — its RID-less `dotnet pack` also AOT-compiles every RID of the host's OS, failing with NETSDK1047 unless restore covers them, where SDK 10 builds the pointer alone. Against a 2% larger binary and no faster start, nine fewer packages — all Microsoft's, and still shipped, inside the shared framework — pay for neither. It needs no `NuGet.Frameworks` pin in `build/`: that pin was load-bearing only while Fallout's `ITest` evaluated test projects in-process, and the hand-written `Test` target (D11) does not — SDK 11.0.100 with `net11.0` runs the simulated CI `Test` green without it (2026-11-18). Revisit at .NET 12 LTS. |
 | D24 | **An argument the schema does not name is refused, not dropped.** The SDK binds arguments by exact name and ignores the rest, so a mis-cased required argument failed with a bare "An error occurred invoking", and a mis-cased optional one vanished — `Workspace` for `workspace` silently ran the call against `BITBUCKET_DEFAULT_WORKSPACE`, which for a write tool is a change in the wrong place. A call-tool filter registered by `McpServerSetup.WithBitbucketTools` checks the names in `arguments` against the tool's input schema before the tool runs (`ToolArguments`) and answers with a tool error that names each unknown argument and, when only the case differs, the spelling meant. It is a tool error, not a protocol error, because the model is what has to correct the call. Only `arguments` is checked: `_meta` and anything else a client adds travel beside it in `params`. `ToolArgumentTests` asserts every tool accepts all of its own schema's names, and drives the filter through a real `McpClient`. |
 | D25 | **Each release is listed in the official MCP Registry by the build, after nuget.org.** `PublishMcpRegistry` runs in `publish.yml` after `Publish` and posts `.mcp/server.json` to `registry.modelcontextprotocol.io` as `io.github.lahma/bitbucket-mcp`, logged in with a registry token exchanged for the job's GitHub OIDC token — no secret, and no `mcp-publisher` binary downloaded into the release path, for the reason D17 keeps the NuGet exchange in C#. The registry refuses a NuGet entry until nuget.org serves the README of that exact version with `mcp-name: <server name>` in it (its ownership proof), and nuget.org takes minutes to validate and index a push, so the target first polls that README, through the service index's `ReadmeUriTemplate/6.13.0`, for up to 40 minutes. It runs last so it can neither hold up nor undo the nuget.org push, and a rerun is safe: a version the registry already lists is reported and skipped, since versions there are immutable. |
 
@@ -384,15 +384,18 @@ override properties gone. Do not "update" it. The CLI is pinned in `.config/dotn
 ```powershell
 .\build.ps1 Test          # restore, compile, run tests
 .\build.ps1 SmokeTest     # AOT publish + real stdio JSON-RPC handshake against the binary
-.\build.ps1 Pack          # the NuGet tool package (D17) into artifacts/packages
+.\build.ps1 Pack          # the pointer and `any` tool packages (D17) into artifacts/packages
+.\build.ps1 PackRuntime   # the Native AOT tool package for the host RID, handshaken from inside it
 ```
 
-`PublishAot` is switched **off when no `RuntimeIdentifier` is set**. `dotnet pack` of a tool
-package packs `$(PublishDir)`, so it runs a publish of the server project; left at `true` that
-publish fails with *RuntimeIdentifier is required for native compilation* (D9 deliberately keeps
-RIDs out of the csproj). The AOT publish always passes `-r`, so keying the property off
-`RuntimeIdentifier` gives the release path AOT and the pack path a portable IL tool from the same
-project file.
+`PublishAot` is **true for every build**, RID or not, and `ToolPackageRuntimeIdentifiers` (D17) is
+what lets packing live with that: a RID-less `dotnet pack` builds the pointer package alone,
+`dotnet pack -r <rid>` the native package for that RID, and the fallback is packed with
+`-r any -p:PublishAot=false`. Before the RID-specific packages, a RID-less pack published the server
+and failed for want of a RID, so `PublishAot` was switched off without one, and the AOT analyzers
+were then enabled by hand so that `dotnet build` and `dotnet test` kept them. Both workarounds are
+gone; an `IL2057` probe confirmed a plain `dotnet build` still fails on AOT-hostile code. This is
+SDK 10's behaviour — SDK 11's RID-less pack does more (D23).
 
 `CHANGELOG.md` is the **version authority**: its top section is parsed in `OnBuildInitialized`
 and passed to the build as the version. The file is never mutated by the build, and the first
@@ -440,8 +443,9 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
 - **The shipped skill names the tools that exist, and all of them.** `AgentSkillTests` reads
   `.claude/skills/bitbucket-pull-requests/SKILL.md` (found through `RepositoryRoot`, like every
-  test that reads checked-in files) and cross-checks every backticked tool-shaped identifier against the reflected inventory, in both
-  directions: a name no tool answers to fails, and so does a tool the skill never mentions. Tool
+  test that reads checked-in files) and cross-checks every backticked tool-shaped identifier
+  against the reflected inventory, in both directions: a name no tool answers to fails, and so does
+  a tool the skill never mentions. Tool
   *parameter* names are excluded by reflection, not by a list, so `mergeStrategy` does not read as a
   missing tool. Nothing else loads that file, so without this it would keep advertising an older
   surface — the inventory grew from ten tools to sixteen during development and to twenty-two since, and a skill written
@@ -461,23 +465,34 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   credential surface matches `.mcp/server.json` placeholder for placeholder. Nothing in the build
   reads these manifests back, exactly as with the server manifest.
 - **`.mcp/server.json` agrees with the version authority.** `McpServerManifestTests` reads the
-  checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root and asserts the manifest's `version` and its NuGet entry's
-  `version` both equal the changelog's top version, and that its `identifier` equals `<PackageId>`.
+  checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root and asserts
+  the manifest's `version` and its NuGet entry's `version` both equal the changelog's top version,
+  and that its `identifier` equals `<PackageId>`.
   Nothing in the build reads the manifest back, so without this a released package would keep
   advertising an old version indefinitely.
+- **The tool package's runtimes are the release legs** (D17). `ToolPackageTests` holds the
+  project's `ToolPackageRuntimeIdentifiers` (without `any`) equal to `release.yml`'s matrix,
+  requires the `any` fallback, and checks that every leg runs `PackRuntime` and uploads
+  `tool-package-<rid>`, the name `CollectRuntimePackages` collects. A RID in one list only is a
+  pointer naming a package nobody builds, or a native binary nobody is offered, and would otherwise
+  first show at release time.
 
 `SmokeTest` is the end-to-end check the unit tests cannot be: it publishes the Native AOT binary,
 spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
-over stdio, asserting `serverInfo.name` and all twenty-two tool names. CI runs `Test` and `SmokeTest`
-on every push and pull request.
+over stdio, asserting `serverInfo.name` and all twenty-two tool names. The same handshake runs
+against every program a tool package ships: `Pack` runs the `any` fallback the way the CLI does,
+`dotnet bitbucket-mcp.dll`, and `PackRuntime` the native binary extracted from its package — a
+second publish, so a second binary, and the one `dnx` users get. CI runs `Test`, `SmokeTest` and
+`Pack` on every push and pull request.
 
 ## Release engineering
 
-Releases are cut by pushing a `v*` tag, which starts **two independent workflows**:
-`release.yml` (binaries + the GitHub Release) and `publish.yml` (nuget.org, then the MCP Registry —
-D17, D25 and *The NuGet leg* below). They do not depend on each other, deliberately: the AOT
-binaries are the product, so a nuget.org outage or a policy mismatch must not be able to hold up the
-GitHub Release, and neither must the reverse.
+Releases are cut by pushing a `v*` tag, which starts **two workflows**: `release.yml` (binaries, the
+RID tool packages and the GitHub Release) and `publish.yml` (nuget.org, then the MCP Registry — D17,
+D25 and *The NuGet leg* below). `publish.yml` waits for `release.yml`'s tool packages, because only
+a runner of the target OS can build them; nothing in `release.yml` waits for `publish.yml`,
+deliberately: the AOT binaries are the product, so a nuget.org outage or a policy mismatch must not
+be able to hold up the GitHub Release.
 
 `.github/workflows/release.yml` is hand-written (the `[GitHubActions]` generator has no matrix
 support) and runs five publish legs — one per RID, each on its own hardware — followed by a
@@ -491,21 +506,25 @@ support) and runs five publish legs — one per RID, each on its own hardware �
 | `win-arm64` | `windows-11-arm` |
 | `osx-arm64` | `macos-latest` |
 
-Every leg runs `dotnet fallout SmokeTest --runtime <rid>`, and `SmokeTest` depends on `PublishAot`,
-so each leg compiles its own binary, speaks JSON-RPC to it *on the architecture it targets*, and
-only then uploads the archive. **Never ship a binary that has not answered a handshake on its own
+Every leg runs `dotnet fallout SmokeTest PackRuntime --runtime <rid>`, and `SmokeTest` depends on
+`PublishAot`, so each leg compiles its own binary, speaks JSON-RPC to it *on the architecture it
+targets*, then packs its RID tool package and speaks JSON-RPC to the binary inside that too, and only
+then uploads the archive and the `tool-package-<rid>` artifact. **Never ship a binary that has not answered a handshake on its own
 architecture** — that is the whole reason the arm64 legs are not cross-compiled. `fail-fast` is off
 so one broken runtime cannot mask the state of the other four.
 
-The Linux legs also check the **glibc floor**. A Native AOT binary links against the build host's
-glibc, and the released binaries need `GLIBC_2.34` at most (read from the v1.2.1 binary's ELF
+Every Linux binary is held to the **glibc floor**. A Native AOT binary links against the build
+host's glibc, and the released binaries need `GLIBC_2.34` at most (read from the v1.2.1 binary's ELF
 version needs, 2026-11-18). `linux-x64` is therefore pinned to `ubuntu-24.04` rather than
-`ubuntu-latest`, which moved to 26.04, and a step after the smoke test fails the leg if `objdump -T`
-shows a newer `GLIBC_` version. When 24.04 is retired, that step is what turns red.
+`ubuntu-latest`, which moved to 26.04 — and so is `build.yml`, so the binary CI checks is the one a
+release would ship — and `PublishAot` and `PackRuntime` both fail when `objdump -T` shows the binary
+they produced needing more than `MaxGlibc` in `build/Build.cs`. When 24.04 is retired, that check is
+what turns red.
 
-`workflow_dispatch` runs the same five legs as a **dry run** — build, smoke test, glibc check — and
-skips the `release` job, which only runs for a `v` tag. Run it on a branch before tagging anything
-that changes the toolchain.
+`workflow_dispatch` runs the same five legs as a **dry run** — build, smoke test, glibc check, tool
+package — and skips the `release` job, which only runs for a `v` tag. Run it on a branch before
+tagging anything that changes the toolchain; its tool-package artifacts are also what
+`CollectRuntimePackages` is rehearsed against (*The NuGet leg*).
 
 `CHANGELOG.md` stays the version authority here too: `CreateGitHubRelease` refuses to publish
 unless `GITHUB_REF_NAME` equals `v{version parsed from CHANGELOG.md}`. To release, land the
@@ -549,8 +568,8 @@ Three properties of the release path were verified end to end by a throwaway `v0
 `build/Build.CI.GitHubActions.cs` (hard rule 2 — never hand-edit it; any build run regenerates it,
 or `dotnet fallout --generate-configuration GitHubActions_publish --host GitHubActions`). One
 Ubuntu job runs `dotnet fallout Compile Test Pack Publish PublishMcpRegistry` with
-`permissions: { contents: read, id-token: write }`, `environment: nuget` and
-`env: NUGET_USER: lahma`.
+`permissions: { contents: read, actions: read, id-token: write }`, `GITHUB_TOKEN`,
+`environment: nuget` and `env: NUGET_USER: lahma`.
 
 Three shapes are load-bearing and were chosen, not defaulted:
 
@@ -571,6 +590,25 @@ GitHub Actions, that `NUGET_USER` is set, and that `GITHUB_REF_NAME` equals
 `v{version from CHANGELOG.md}` — the same guard `CreateGitHubRelease` applies, for the same reason.
 It then mints the key immediately before pushing, because the key lives 15–60 minutes and one OIDC
 token mints exactly one key.
+
+`Publish` depends on `CollectRuntimePackages`, which finds the `release.yml` run a push of the same
+commit started (`head_sha`, `event=push`; it may take a moment to appear), waits up to an hour for
+all five `tool-package-<rid>` artifacts and downloads them — `actions: read` is what lets the
+`GITHUB_TOKEN` read another workflow's artifacts. It fails as soon as that run completes without
+one: re-run the failed `release.yml` jobs, then this one; `--skip-duplicate` makes a half-finished
+push safe to repeat. The RID packages go to nuget.org first, `any` last among them, and the pointer
+only after all of them, stopping at the first failure. Rehearse the collection before a tag against
+a dry run:
+
+```powershell
+gh workflow run release.yml --ref <branch>         # then, once its legs are green:
+$env:GITHUB_TOKEN = gh auth token
+dotnet fallout CollectRuntimePackages --release-run-id <run id> --skip
+```
+
+nuget.org validates and indexes each package on its own. sonarqube-mcp, on the same recipe, saw its
+`any` package served within minutes and the native ones about 25 minutes after the push, so a fresh
+version's `dnx` install can fail on a native platform for that long after the pointer is live.
 
 `IsTaggedBuild` reads `GITHUB_REF_NAME` on GitHub Actions (the ref the run was triggered for is the
 authoritative answer, and it is what the guard compares against anyway) and falls back to a `v*`

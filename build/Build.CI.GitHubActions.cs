@@ -6,19 +6,22 @@ using Fallout.Components;
 //
 // One Linux job. FetchDepth = 0 because the changelog-driven version and GitRepository want the
 // full history. SmokeTest implies PublishAot, so CI publishes a real linux-x64 Native AOT binary
-// and speaks JSON-RPC to it on every push and pull request.
+// and speaks JSON-RPC to it on every push and pull request. Ubuntu 24.04 by name, not ubuntu-latest:
+// it is the image release.yml's linux-x64 leg builds on, so the binary CI checks - its glibc floor
+// included - is the one a release would ship. Pack runs too: the pointer package and the
+// framework-dependent 'any' fallback, whose program answers a handshake before anything ships.
 //
 // PublishArtifacts = false: the per-RID archives that PublishAot .Produces() belong to the
 // hand-written release workflow (the generator has no matrix support), not to the PR gate.
 [GitHubActions(
     "build",
-    GitHubActionsImage.UbuntuLatest,
+    GitHubActionsImage.Ubuntu2404,
     FetchDepth = 0,
     OnPushBranches = ["main"],
     OnPullRequestBranches = ["main"],
     ConcurrencyGroup = "${{ github.workflow }}-${{ github.ref }}",
     ConcurrencyCancelInProgress = true,
-    InvokedTargets = [nameof(Test), nameof(SmokeTest)],
+    InvokedTargets = [nameof(Test), nameof(SmokeTest), nameof(Pack)],
     PublishArtifacts = false)]
 // .github/workflows/publish.yml is generated from this second attribute (same hard rule 2 - never
 // hand-edit the YAML).
@@ -30,7 +33,10 @@ using Fallout.Components;
 //
 // No OnPushIncludePaths/ExcludePaths: a path filter alongside `tags:` evaluates over the tag
 // commit's diff and can silently skip the release run. One Ubuntu job, because more jobs would mean
-// more OIDC exchanges racing for the same one-key-per-30s rate limit.
+// more OIDC exchanges racing for the same one-key-per-30s rate limit. It collects the RID packages
+// the same tag's release.yml legs built (Native AOT does not cross-compile across operating systems,
+// and only this file may push), pushes them ahead of the pointer, then lists the version in the MCP
+// Registry once nuget.org serves its README.
 [GitHubActions(
     "publish",
     GitHubActionsImage.UbuntuLatest,
@@ -44,8 +50,11 @@ using Fallout.Components;
     // secret would be masked out of exactly the error message that names it.
     Env = ["NUGET_USER: lahma"],
     EnvironmentName = "nuget",
-    ReadPermissions = [GitHubActionsPermissions.Contents],
-    WritePermissions = [GitHubActionsPermissions.IdToken])]
+    // Actions: CollectRuntimePackages downloads the RID packages the same tag's release.yml legs
+    // uploaded, which reads another workflow's artifacts through the GITHUB_TOKEN.
+    ReadPermissions = [GitHubActionsPermissions.Contents, GitHubActionsPermissions.Actions],
+    WritePermissions = [GitHubActionsPermissions.IdToken],
+    EnableGitHubToken = true)]
 partial class Build
 {
 }

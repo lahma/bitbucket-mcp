@@ -3,25 +3,31 @@
 #
 # Every leg runs `fallout SmokeTest`, which depends on PublishAot - so each leg builds its own
 # Native AOT binary, drives a real stdio JSON-RPC handshake against it, and only then uploads the
-# archive. Nothing reaches a release without having answered `initialize` and `tools/list` on the
-# hardware it was compiled for; the arm64 legs run on arm64 runners for exactly that reason.
+# archive. `PackRuntime` then packs the leg's RID-specific tool package (D17) and handshakes the
+# binary inside it too, since `dotnet pack -r` publishes again; the tag's publish.yml run collects
+# the five packages from here, because only a runner of the target OS can build them and only
+# publish.yml may push them. Nothing reaches a release without having answered `initialize` and
+# `tools/list` on the hardware it was compiled for; the arm64 legs run on arm64 runners for exactly
+# that reason.
 #
 # Action majors are pinned to match the generated build.yml (checkout@v7, setup-dotnet@v6);
 # upload-artifact@v7 and download-artifact@v8 are the current majors and are the matching pair
 # (v8 of the downloader exists to understand v7's direct uploads).
 #
 # Binaries and the GitHub Release only. The nuget.org push (D17) lives in the generated publish.yml,
-# which the same tag triggers independently - a nuget.org outage must not be able to hold up a
-# release, and the trusted publishing policy names one workflow file, which is that one and not
-# this one.
+# which the same tag triggers: it waits for this run's tool-package artifacts, while nothing here
+# ever waits for it - a nuget.org outage must not be able to hold up a release, and the trusted
+# publishing policy names one workflow file, which is that one and not this one.
 #
 # linux-x64 runs on ubuntu-24.04, not ubuntu-latest: a Native AOT binary links against the build
 # host's glibc, and the released binaries need GLIBC_2.34 at most. ubuntu-latest moving to a newer
-# image would raise that floor without anything failing, so the image is pinned and the floor is
-# asserted after the smoke test. When 24.04 is retired, the check is what turns red.
+# image would raise that floor without anything failing, so the image is pinned, and PublishAot and
+# PackRuntime both assert the floor (MaxGlibc in build/Build.cs) on the binary they produce. When
+# 24.04 is retired, that check is what turns red.
 #
-# workflow_dispatch is a dry run: every leg builds, smoke-tests and checks its binary, and the
-# release job is skipped because there is no tag.
+# workflow_dispatch is a dry run: every leg builds, smoke-tests and checks its binary and its tool
+# package, and the release job is skipped because there is no tag. Its tool-package artifacts are
+# what `CollectRuntimePackages --release-run-id` is rehearsed against.
 
 name: release
 
@@ -64,22 +70,20 @@ jobs:
           global-json-file: global.json
       - name: 'Restore: dotnet tools'
         run: dotnet tool restore
-      - name: 'Run: SmokeTest'
-        run: dotnet fallout SmokeTest --runtime ${{ matrix.rid }}
-      - name: 'Check: glibc floor'
-        if: startsWith(matrix.rid, 'linux-')
-        run: |
-          max=$(objdump -T artifacts/publish/${{ matrix.rid }}/bitbucket-mcp | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
-          echo "bitbucket-mcp requires $max"
-          if [ "$(printf '%s\nGLIBC_2.34\n' "$max" | sort -V | tail -1)" != "GLIBC_2.34" ]; then
-            echo "::error::The binary needs $max, above the GLIBC_2.34 floor the released binaries keep."
-            exit 1
-          fi
+      - name: 'Run: SmokeTest, PackRuntime'
+        run: dotnet fallout SmokeTest PackRuntime --runtime ${{ matrix.rid }}
       - name: 'Upload: archives'
         uses: actions/upload-artifact@v7
         with:
           name: archives-${{ matrix.rid }}
           path: artifacts/archives/*
+          if-no-files-found: error
+      # The name is the contract with Build.Publish.cs's RuntimePackageArtifactPrefix (ToolPackageTests).
+      - name: 'Upload: tool package'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tool-package-${{ matrix.rid }}
+          path: artifacts/packages/*.nupkg
           if-no-files-found: error
 
   release:

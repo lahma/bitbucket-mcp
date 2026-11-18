@@ -25,9 +25,11 @@
       "type": "string",
       "enum": [
         "Clean",
+        "CollectRuntimePackages",
         "Compile",
         "CreateGitHubRelease",
         "Pack",
+        "PackRuntime",
         "Publish",
         "PublishAot",
         "PublishMcpRegistry",
@@ -133,6 +135,14 @@
         "NuGetUser": {
           "type": "string",
           "description": "nuget.org profile name of the account that owns the trusted publishing policy (env: NUGET_USER). Public information, not a secret"
+        },
+        "ReleaseRunId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "A release.yml run id to collect the RID packages from, instead of the run the tag started - how CollectRuntimePackages is rehearsed against a manual dry run"
         },
         "Runtime": {
           "type": "string",

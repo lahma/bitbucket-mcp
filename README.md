@@ -61,10 +61,11 @@ of the API, are in [AGENTS.md](AGENTS.md#tool-table).
 
 ## Install
 
-Two channels. The **Native AOT binary is the recommended one** — self-contained, nothing to
-install, roughly ten milliseconds to start. The
+Two channels, one binary. The **Native AOT binary is the recommended one** — self-contained,
+nothing to install, roughly ten milliseconds to start. The
 [NuGet package](https://www.nuget.org/packages/bitbucket-mcp) is the convenience one: no download
-step, at the cost of needing the .NET 10 SDK and a JIT startup.
+step, at the cost of needing the .NET 10 SDK for `dnx`, which then runs that same binary on the five
+platforms below.
 
 ### Native AOT binary (recommended)
 
@@ -84,7 +85,7 @@ The Linux binaries need glibc 2.34 or newer — Ubuntu 22.04, Debian 12, RHEL 9 
 successors. The release checks that floor on every build, so it cannot move without a release note.
 
 ```bash
-tar -xzf bitbucket-mcp-1.3.2-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.4.0-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -104,11 +105,14 @@ bitbucket-mcp status     Show the current authentication status.
 
 The same server is published to nuget.org as
 [`bitbucket-mcp`](https://www.nuget.org/packages/bitbucket-mcp), a .NET tool package carrying the
-`McpServer` package type. `dnx` — part of the .NET 10 SDK — downloads and runs it in one step, so
-there is nothing to install and nothing to keep up to date by hand:
+`McpServer` package type. It points `dnx` at one package per platform: `bitbucket-mcp.win-x64`,
+`.win-arm64`, `.linux-x64`, `.linux-arm64` and `.osx-arm64` hold the Native AOT binary the release
+archives ship, and `bitbucket-mcp.any` a framework-dependent build for every other platform. `dnx`
+— part of the .NET 10 SDK — picks the right one, downloads it and runs it in one step, so there is
+nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.3.2 --yes status
+dnx bitbucket-mcp@1.4.0 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -121,7 +125,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.3.2", "--yes"],
+      "args": ["bitbucket-mcp@1.4.0", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -131,11 +135,14 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.3.2`) rather than floating: an MCP server is something an agent runs on your
-behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
-needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
-missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
-also has to download the package.
+Pin the version (`@1.4.0`) rather than floating: an MCP server is something an agent runs on your
+behalf, and a pinned version is one you decided to run. `dnx` is part of the .NET 10 SDK — if a
+client reports *the command "dnx" was not found*, that is what is missing — but on the five native
+platforms the server it starts needs no runtime: through `dnx`, `initialize` and `tools/list` take
+about 0.3 s, against about 0.6 s for the framework-dependent package that versions before 1.4.0
+shipped (win-x64, measured with a warm cache). The first run also has to download the package. The
+Linux packages need glibc 2.34 or newer, like the archives; on any other platform the `any` package
+runs on the installed .NET runtime, 10 or newer.
 
 Releases are pushed to nuget.org by `.github/workflows/publish.yml`, a workflow only a `v*.*.*` tag
 can start, using [trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing):
@@ -770,13 +777,15 @@ cd bitbucket-mcp
 
 ./build.sh Test           # restore, compile, run the tests
 ./build.sh SmokeTest      # AOT publish + a real stdio JSON-RPC handshake against the binary
-./build.sh Pack           # the NuGet tool package, into artifacts/packages
+./build.sh Pack           # the pointer and 'any' NuGet tool packages, into artifacts/packages
+./build.sh PackRuntime    # the Native AOT tool package for this machine's platform
 ```
 
 ```powershell
 .\build.ps1 Test
 .\build.ps1 SmokeTest
 .\build.ps1 Pack
+.\build.ps1 PackRuntime
 ```
 
 The orchestrator is [Fallout](https://fallout.build); `build.ps1` / `build.sh` bootstrap the CLI
@@ -790,8 +799,8 @@ dotnet fallout PublishAot --runtime linux-arm64
 The executable lands in `artifacts/publish/{rid}/` and the release archive in
 `artifacts/archives/`. `CHANGELOG.md` is the version authority — the build parses its top section
 and stamps that version into the binary, the package and `.mcp/server.json` (a test fails if the
-manifest falls behind). Note that `PublishAot` applies only when a runtime identifier is given:
-`Pack` deliberately produces the portable, framework-dependent tool half from the same project.
+manifest falls behind). A Native AOT build only targets the operating system it runs on, which is
+why each release leg packs its own platform's tool package (`PackRuntime --runtime <rid>`).
 
 ## Contributing
 

@@ -1,9 +1,14 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using System.Threading;
+using System.Xml.Linq;
 
 using Fallout.Common;
 using Fallout.Common.CI.GitHubActions;
@@ -18,18 +23,27 @@ using Serilog;
 using static Fallout.Common.Tools.DotNet.DotNetTasks;
 
 /// <summary>
-/// The NuGet distribution channel (D17): <c>Pack</c> builds the framework-dependent .NET tool
-/// package and <c>Publish</c> pushes it to nuget.org with a short-lived API key minted from the
-/// workflow's GitHub OIDC token (trusted publishing - no stored NuGet API key anywhere). Then
-/// <c>PublishMcpRegistry</c> lists that version in the official MCP Registry (D25), with a
-/// registry token minted from the same kind of OIDC token.
+/// The NuGet distribution channel (D17): RID-specific Native AOT tool packages behind one pointer
+/// package, pushed to nuget.org with a short-lived API key minted from the workflow's GitHub OIDC
+/// token (trusted publishing - no stored NuGet API key anywhere). Then <c>PublishMcpRegistry</c>
+/// lists that version in the official MCP Registry (D25), with a registry token minted from the
+/// same kind of OIDC token.
 /// </summary>
 /// <remarks>
-/// The Native AOT binaries on GitHub Releases remain the primary channel; this one exists so a
-/// user can type <c>dnx bitbucket-mcp</c> without downloading an archive first. There is no preview
-/// feed: the only push this repository ever makes is a tagged release to nuget.org, which is why
-/// <c>Publish</c> is a single-source target gated on <see cref="Build.IsTaggedBuild"/> rather than
-/// a two-way switch between a release feed and a preview one.
+/// <para>
+/// <c>dnx bitbucket-mcp</c> resolves the pointer package, which names one package per runtime; the
+/// CLI then fetches the one for the user's platform, or the framework-dependent <c>any</c> package
+/// on a platform without one. Native AOT does not cross-compile across operating systems, so each
+/// RID package is built and handshake-tested by its own <c>release.yml</c> leg (<c>PackRuntime</c>),
+/// and the tag's <c>publish.yml</c> run collects them (<c>CollectRuntimePackages</c>) before pushing:
+/// <c>publish.yml</c> is the only workflow file the trusted publishing policy names.
+/// </para>
+/// <para>
+/// There is no preview feed: the only push this repository ever makes is a tagged release to
+/// nuget.org, which is why <c>Publish</c> is a single-source target gated on
+/// <see cref="Build.IsTaggedBuild"/> rather than a two-way switch between a release feed and a
+/// preview one.
+/// </para>
 /// </remarks>
 partial class Build
 {
@@ -41,7 +55,7 @@ partial class Build
     const string NuGetTokenServiceUrl = "https://www.nuget.org/api/v2/token";
 
     /// <summary>
-    /// Sent with every request the build makes to nuget.org and the MCP Registry. Any non-empty
+    /// Sent with every request the build makes to nuget.org, GitHub and the MCP Registry. Any non-empty
     /// User-Agent will do, but there must be one - see <see cref="GetTrustedPublishingApiKey"/>.
     /// </summary>
     const string BuildUserAgent = "bitbucket-mcp-build/1.0";
@@ -60,7 +74,19 @@ partial class Build
     /// </summary>
     static readonly TimeSpan NuGetReadmeTimeout = TimeSpan.FromMinutes(40);
 
-    static readonly TimeSpan NuGetReadmePollInterval = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// How long <c>CollectRuntimePackages</c> waits for the release legs to upload their packages. A leg
+    /// takes about five minutes; this covers a queue for an arm64 or macOS runner.
+    /// </summary>
+    static readonly TimeSpan ReleaseLegsTimeout = TimeSpan.FromMinutes(60);
+
+    static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>The workflow whose legs build the RID packages.</summary>
+    const string ReleaseWorkflowFile = "release.yml";
+
+    /// <summary>What each <c>release.yml</c> leg names the artifact holding its RID package.</summary>
+    const string RuntimePackageArtifactPrefix = "tool-package-";
 
     /// <summary>The workflow file the nuget.org trusted publishing policy is scoped to.</summary>
     /// <remarks>
@@ -73,62 +99,206 @@ partial class Build
                "(env: NUGET_USER). Public information, not a secret.")]
     readonly string NuGetUser;
 
+    [Parameter("A release.yml run id to collect the RID packages from, instead of the run the tag " +
+               "started - how CollectRuntimePackages is rehearsed against a manual dry run")]
+    readonly long? ReleaseRunId;
+
     AbsolutePath PackagesDirectory => ArtifactsDirectory / "packages";
+    AbsolutePath PackageCheckDirectory => ArtifactsDirectory / "package-check";
     AbsolutePath ServerManifestFile => RootDirectory / ".mcp" / "server.json";
 
+    string PackageId => ServerProjectProperty("PackageId");
+
+    /// <summary>
+    /// The runtimes that get a Native AOT package: the project's <c>ToolPackageRuntimeIdentifiers</c>
+    /// without <c>any</c>, the framework-dependent fallback. <c>ToolPackageTests</c> holds the release
+    /// matrix to the same list.
+    /// </summary>
+    string[] NativeRuntimes => ServerProjectProperty("ToolPackageRuntimeIdentifiers")
+        .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(x => x != "any")
+        .ToArray();
+
+    string ServerProjectProperty(string name) =>
+        XDocument.Load(ServerProject).Descendants(name).Select(x => x.Value).SingleOrDefault()
+            .NotNull($"{ServerProject} declares no <{name}>");
+
+    /// <summary>The pointer package for a null runtime, else the package for that runtime.</summary>
+    AbsolutePath PackageFile(string runtime) =>
+        PackagesDirectory / (runtime == null ? $"{PackageId}.{Version}.nupkg" : $"{PackageId}.{runtime}.{Version}.nupkg");
+
     Target Pack => _ => _
-        .Description("Packs the server as a .NET tool / MCP server NuGet package into artifacts/packages")
+        .Description("Packs the pointer tool package and the framework-dependent 'any' fallback into " +
+                     "artifacts/packages, and handshakes the fallback")
         .Produces(PackagesDirectory / "*.nupkg")
         .Executes(() =>
         {
-            // Independent of Compile for the same reason PublishAot is: this is a Release build of
-            // one project, and `dotnet pack` of a tool package runs its own publish anyway.
-            PackagesDirectory.CreateOrCleanDirectory();
+            // Independent of Compile for the same reason PublishAot is: these are Release packs of one
+            // project. Only this target's own files are replaced; PackRuntime and CollectRuntimePackages
+            // add the others.
+            PackagesDirectory.CreateDirectory();
+            PackageFile(null).DeleteFile();
+            PackageFile("any").DeleteFile();
 
+            // With PublishAot and ToolPackageRuntimeIdentifiers set, a RID-less pack builds the pointer
+            // package alone: it names the RID packages and carries no program.
             DotNetPack(_ => _
                 .SetProject(ServerProject)
                 .SetConfiguration(Configuration.Release)
                 .SetOutputDirectory(PackagesDirectory)
                 .SetProperty("Version", Version));
 
-            var packages = PackagesDirectory.GlobFiles("*.nupkg");
-            Assert.NotEmpty(packages, $"dotnet pack produced no .nupkg in '{PackagesDirectory}'");
+            DotNetPack(_ => _
+                .SetProject(ServerProject)
+                .SetConfiguration(Configuration.Release)
+                .SetRuntime("any")
+                .SetProperty("PublishAot", false)
+                .SetOutputDirectory(PackagesDirectory)
+                .SetProperty("Version", Version));
 
-            foreach (var package in packages)
-            {
-                Log.Information("Packed {Package}", package.Name);
-            }
+            Assert.True(PackageFile(null).FileExists(), $"dotnet pack did not produce '{PackageFile(null)}'");
+            Assert.True(PackageFile("any").FileExists(), $"dotnet pack -r any did not produce '{PackageFile("any")}'");
+
+            // The fallback ships a program too, so it answers a handshake before it ships - run the way
+            // the CLI runs a framework-dependent tool, `dotnet bitbucket-mcp.dll`.
+            var dll = ExtractPackage(PackageFile("any")).GlobFiles($"tools/**/{ProductName}.dll").Single();
+            var (tools, _) = AssertServerAnswers(new ServerUnderTest("dotnet", $"\"{dll}\"", dll.Parent));
 
             ReportSummary(_ => _
                 .AddPair("Version", Version)
-                .AddPair("Packages", packages.Count.ToString()));
+                .AddPair("Packages", "pointer, any")
+                .AddPair("Fallback tools", tools.ToString()));
+        });
+
+    Target PackRuntime => _ => _
+        .Description("Packs the Native AOT tool package for --runtime into artifacts/packages and " +
+                     "handshakes the binary inside it")
+        .Produces(PackagesDirectory / "*.nupkg")
+        .Executes(() =>
+        {
+            Assert.True(NativeRuntimes.Contains(Runtime, StringComparer.Ordinal),
+                $"'{Runtime}' is not one of the tool package's runtimes ({string.Join(", ", NativeRuntimes)}). " +
+                "Add it to ToolPackageRuntimeIdentifiers in the project and to release.yml's matrix together.");
+
+            PackagesDirectory.CreateDirectory();
+            PackageFile(Runtime).DeleteFile();
+
+            DotNetPack(_ => _
+                .SetProject(ServerProject)
+                .SetConfiguration(Configuration.Release)
+                .SetRuntime(Runtime)
+                .SetOutputDirectory(PackagesDirectory)
+                .SetProperty("Version", Version));
+
+            Assert.True(PackageFile(Runtime).FileExists(), $"dotnet pack -r {Runtime} did not produce '{PackageFile(Runtime)}'");
+
+            // `dotnet pack -r` publishes again, so the package's binary is not the one SmokeTest checked
+            // in artifacts/publish. It is the one `dnx` users get, so it is held to the same rules: on
+            // Linux the glibc floor, and everywhere a handshake on the architecture it was built for.
+            var binary = ExtractPackage(PackageFile(Runtime)).GlobFiles($"tools/**/{ExecutableName}").Single();
+
+            if (!OperatingSystem.IsWindows())
+            {
+                // A zip entry need not carry a Unix mode; the CLI marks the binary executable when it installs it.
+                File.SetUnixFileMode(binary, File.GetUnixFileMode(binary) |
+                    UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            }
+
+            var glibc = IsLinuxRuntime ? AssertGlibcFloor(binary) : null;
+            var (tools, _) = AssertServerAnswers(new ServerUnderTest(binary, string.Empty, binary.Parent));
+
+            ReportSummary(_ => _
+                .AddPair("Package", PackageFile(Runtime).Name)
+                .AddPair("Tools", tools.ToString())
+                .AddPairWhenValueNotNull("Needs glibc", glibc));
+        });
+
+    Target CollectRuntimePackages => _ => _
+        .Description("Downloads the Native AOT tool packages the release.yml legs built for this commit " +
+                     "into artifacts/packages")
+        .After(Pack)
+        .OnlyWhenDynamic(() => ReleaseRunId != null || IsTaggedBuild)
+        .Executes(() =>
+        {
+            var token = Assert.NotNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_TOKEN"),
+                "Collecting the RID packages reads another workflow's artifacts, which needs GITHUB_TOKEN with " +
+                "actions: read (the publish job's EnableGitHubToken; locally, `gh auth token`).");
+            var repository = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? "lahma/bitbucket-mcp";
+
+            using var github = new HttpClient { BaseAddress = new Uri("https://api.github.com/") };
+            github.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent);
+            github.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            github.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            github.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+
+            var runId = ReleaseRunId ?? FindReleaseRun(github, repository);
+            var wanted = NativeRuntimes.Select(x => RuntimePackageArtifactPrefix + x).ToArray();
+            var artifacts = WaitForArtifacts(github, repository, runId, wanted);
+
+            PackagesDirectory.CreateDirectory();
+
+            foreach (var (name, id) in artifacts)
+            {
+                // The API answers with a redirect to a signed blob URL; HttpClient follows it and drops
+                // the Authorization header on the way, which is what the blob store wants.
+                var zip = PackageCheckDirectory / $"{name}.zip";
+                zip.Parent.CreateDirectory();
+
+                using (var response = github.GetAsync($"repos/{repository}/actions/artifacts/{id}/zip").GetAwaiter().GetResult())
+                {
+                    Assert.True(response.IsSuccessStatusCode,
+                        $"Downloading artifact '{name}' of {ReleaseWorkflowFile} run {runId} failed ({(int) response.StatusCode}).");
+                    using var file = File.Create(zip);
+                    response.Content.CopyToAsync(file).GetAwaiter().GetResult();
+                }
+
+                ZipFile.ExtractToDirectory(zip, PackagesDirectory, overwriteFiles: true);
+                Log.Information("Collected {Artifact} from {Workflow} run {Run}", name, ReleaseWorkflowFile, runId);
+            }
+
+            foreach (var runtime in NativeRuntimes)
+            {
+                Assert.True(PackageFile(runtime).FileExists(),
+                    $"{ReleaseWorkflowFile} run {runId} uploaded no '{PackageFile(runtime).Name}': its artifact holds a " +
+                    "package for another version than CHANGELOG.md's, or none at all.");
+            }
+
+            ReportSummary(_ => _
+                .AddPair("Release run", runId.ToString())
+                .AddPair("Collected", string.Join(", ", NativeRuntimes)));
         });
 
     Target Publish => _ => _
-        .Description("Pushes artifacts/packages to nuget.org using a trusted-publishing (OIDC) key")
-        .DependsOn(Pack)
+        .Description("Pushes the tool packages to nuget.org - every RID package first, the pointer last - " +
+                     "using a trusted-publishing (OIDC) key")
+        .DependsOn(Pack, CollectRuntimePackages)
         .OnlyWhenDynamic(() => ShouldPublish())
         .Executes(() =>
         {
             AssertPublishContext();
 
-            var packages = PackagesDirectory.GlobFiles("*.nupkg");
-            Assert.NotEmpty(packages, $"Nothing to publish: no .nupkg in '{PackagesDirectory}'");
+            var runtimePackages = NativeRuntimes.Append("any").Select(PackageFile).ToList();
+            var pointer = PackageFile(null);
+
+            foreach (var package in runtimePackages.Append(pointer))
+            {
+                Assert.True(package.FileExists(),
+                    $"Refusing to publish an incomplete set: '{package.Name}' is missing from '{PackagesDirectory}'.");
+            }
 
             // Minted here rather than in an earlier target or job: the key lives 15-60 minutes and
             // one OIDC token mints exactly one key.
             var apiKey = GetTrustedPublishingApiKey();
 
-            DotNetNuGetPush(_ => _
-                    .SetSource(NuGetSource)
-                    .SetApiKey(apiKey)
-                    .EnableSkipDuplicate()
-                    .CombineWith(packages, (_, v) => _.SetTargetPath(v)),
-                degreeOfParallelism: 1,
-                completeOnFailure: true);
+            // The CLI resolves the pointer first and the package for the user's runtime second, so a
+            // pointer that is live before its packages is an install that fails. Every runtime package
+            // therefore goes first, the pointer only once all of them went through, and the first
+            // failure stops the push. --skip-duplicate is what makes re-running a half-finished push safe.
+            PushPackages(runtimePackages, apiKey);
+            PushPackages([pointer], apiKey);
 
             ReportSummary(_ => _
-                .AddPair("Pushed", packages.Count.ToString())
+                .AddPair("Pushed", (runtimePackages.Count + 1).ToString())
                 .AddPair("Version", Version));
         });
 
@@ -257,8 +427,104 @@ partial class Build
 
             Log.Information("Waiting for nuget.org to serve the README of {Package} {Version} ({Status})",
                 packageId, Version, (int) response.StatusCode);
-            Thread.Sleep(NuGetReadmePollInterval);
+            Thread.Sleep(PollInterval);
         }
+    }
+
+    void PushPackages(IReadOnlyCollection<AbsolutePath> packages, string apiKey) =>
+        DotNetNuGetPush(_ => _
+                .SetSource(NuGetSource)
+                .SetApiKey(apiKey)
+                .EnableSkipDuplicate()
+                .CombineWith(packages, (_, v) => _.SetTargetPath(v)),
+            degreeOfParallelism: 1,
+            completeOnFailure: false);
+
+    /// <summary>Unpacks a package into a folder of its own under artifacts/package-check.</summary>
+    AbsolutePath ExtractPackage(AbsolutePath package)
+    {
+        var target = PackageCheckDirectory / Path.GetFileNameWithoutExtension(package);
+        target.CreateOrCleanDirectory();
+        ZipFile.ExtractToDirectory(package, target);
+        return target;
+    }
+
+    /// <summary>The newest <c>release.yml</c> run a push of this commit started - the tag's.</summary>
+    static long FindReleaseRun(HttpClient github, string repository)
+    {
+        var sha = Assert.NotNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_SHA"),
+            "GITHUB_SHA names the commit whose release.yml run holds the RID packages; pass --release-run-id " +
+            "to name a run directly.");
+
+        // Both workflows start on the same tag push, so the run may not exist for the first moments.
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5);
+
+        while (true)
+        {
+            var newest = GetJson(github,
+                    $"repos/{repository}/actions/workflows/{ReleaseWorkflowFile}/runs?head_sha={sha}&event=push&per_page=10")
+                ["workflow_runs"]!.AsArray()
+                .OrderByDescending(x => x!["created_at"]!.GetValue<DateTimeOffset>())
+                .FirstOrDefault();
+
+            if (newest != null)
+            {
+                var id = newest["id"]!.GetValue<long>();
+                Log.Information("Collecting RID packages from {Workflow} run {Run} ({Status})",
+                    ReleaseWorkflowFile, id, newest["status"]!.GetValue<string>());
+                return id;
+            }
+
+            Assert.True(DateTimeOffset.UtcNow < deadline,
+                $"No {ReleaseWorkflowFile} run was started by a push of commit {sha}; the RID packages come from it.");
+            Thread.Sleep(TimeSpan.FromSeconds(15));
+        }
+    }
+
+    /// <summary>
+    /// Waits until the run has uploaded every wanted artifact, failing as soon as it finishes without
+    /// one, and returns their ids by name.
+    /// </summary>
+    static IReadOnlyDictionary<string, long> WaitForArtifacts(HttpClient github, string repository, long runId, string[] wanted)
+    {
+        var deadline = DateTimeOffset.UtcNow + ReleaseLegsTimeout;
+
+        while (true)
+        {
+            var found = GetJson(github, $"repos/{repository}/actions/runs/{runId}/artifacts?per_page=100")
+                ["artifacts"]!.AsArray()
+                .Where(x => !x!["expired"]!.GetValue<bool>())
+                .Select(x => (Name: x!["name"]!.GetValue<string>(), Id: x["id"]!.GetValue<long>()))
+                .Where(x => wanted.Contains(x.Name, StringComparer.Ordinal))
+                .GroupBy(x => x.Name)
+                .ToDictionary(x => x.Key, x => x.Max(y => y.Id));
+
+            var missing = wanted.Except(found.Keys, StringComparer.Ordinal).ToArray();
+            if (missing.Length == 0)
+            {
+                return found;
+            }
+
+            var run = GetJson(github, $"repos/{repository}/actions/runs/{runId}");
+            Assert.True(run["status"]!.GetValue<string>() != "completed",
+                $"{ReleaseWorkflowFile} run {runId} finished ({run["conclusion"]?.GetValue<string>()}) without uploading " +
+                $"{string.Join(", ", missing)}: a leg failed, so the set is incomplete and nothing is published. Re-run " +
+                $"the failed {ReleaseWorkflowFile} jobs, then this job.");
+            Assert.True(DateTimeOffset.UtcNow < deadline,
+                $"Gave up after {ReleaseLegsTimeout.TotalMinutes:0} minutes waiting for {string.Join(", ", missing)} " +
+                $"from {ReleaseWorkflowFile} run {runId}.");
+
+            Log.Information("Waiting for {Missing} from {Workflow} run {Run}", string.Join(", ", missing), ReleaseWorkflowFile, runId);
+            Thread.Sleep(PollInterval);
+        }
+    }
+
+    static JsonNode GetJson(HttpClient client, string url)
+    {
+        using var response = client.GetAsync(url).GetAwaiter().GetResult();
+        var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        Assert.True(response.IsSuccessStatusCode, $"GET {url} failed ({(int) response.StatusCode}): {body}");
+        return JsonNode.Parse(body)!;
     }
 
     /// <summary>

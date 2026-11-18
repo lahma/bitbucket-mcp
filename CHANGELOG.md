@@ -1,3 +1,16 @@
+# 1.4.0
+
+- `dnx bitbucket-mcp` runs the Native AOT binary. The NuGet package is now a pointer to one
+  package per platform — `bitbucket-mcp.win-x64`, `.win-arm64`, `.linux-x64`, `.linux-arm64` and
+  `.osx-arm64`, each holding the same self-contained binary as that platform's release archive —
+  and `dnx` fetches the one for the machine it runs on. Through `dnx`, `initialize` and
+  `tools/list` take about 0.3 s instead of about 0.6 s (win-x64, warm cache), and the server needs no
+  .NET runtime on those platforms; `dnx` itself still comes with the .NET 10 SDK. Every other
+  platform gets `bitbucket-mcp.any`, the framework-dependent build every platform got before. The
+  Claude Code plugin runs through `dnx`, so it gets the native binary too.
+- Each release leg now handshakes the binary inside its tool package as well as the one in its
+  archive, since packing publishes it again, and holds both to the glibc 2.34 floor on Linux.
+
 # 1.3.2
 
 - Listed in the official [MCP Registry](https://registry.modelcontextprotocol.io) as
