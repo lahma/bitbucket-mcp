@@ -37,7 +37,7 @@ All numbers below were measured locally on copies of `HEAD`, with SDK 10.0.404 a
 | Packages restored for the server | 21 | 12 (M.E.\*.Abstractions moved into the shared framework[^shared]) |
 | Support ends | 2028-11 (LTS) | 2028-11-14 (STS) |
 | `dnx bitbucket-mcp` on a machine with only .NET 10 | works | fails, unless the package also carries `net10.0` |
-| `NuGet.Frameworks` pin in `build/` | not needed | required, at 8.0.0 |
+| `NuGet.Frameworks` pin in `build/` | not needed | required at 8.0.0 while `ITest` ran; not needed once Phase T replaced it |
 
 The only real gain is the smaller restore graph, and it exists only with `net11.0` *alone*. Carrying `net10.0` too, so that `dnx` keeps working (verified: SDK 10 picks `tools/net10.0`, SDK 11 picks `tools/net11.0`), keeps the old graph in the repository and the package. So the server stays on .NET 10 LTS.
 
@@ -347,7 +347,7 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Target framework | Stay `net10.0` on SDK 10.0.4xx (chosen in review) | Measured: no size or startup gain on 11, same support end, and `dnx` keeps working for .NET 10 users |
-| If moving to .NET 11 later | `global.json` 11.0.100; `net11.0` in `Directory.Build.props` and `build/_build.csproj`; `NuGet.Frameworks` **8.0.0** pin; M.E.\* 11.0.0; optionally `TargetFrameworks=net10.0;net11.0` on the server plus `.SetFramework("net11.0")` in `PublishAot` | All verified green; without the pin a simulated CI run fails with `Could not load … NuGet.Frameworks, Version=7.11.0.0` |
+| If moving to .NET 11 later | `global.json` 11.0.100; `net11.0` in `Directory.Build.props` and `build/_build.csproj`; M.E.\* 11.0.0; optionally `TargetFrameworks=net10.0;net11.0` on the server plus `.SetFramework("net11.0")` in `PublishAot` | No `NuGet.Frameworks` pin: verified on SDK 11.0.100 after Phase T. (Before `ITest` was replaced, a simulated CI run failed without one with `Could not load … NuGet.Frameworks, Version=7.11.0.0`.) |
 | Test framework | NUnit 5 on MTP (chosen in review) | The user's choice, matching Jint; replaces the VSTest bridge D11 was holding xunit at 3.x for |
 | How tests run under Fallout | Hand-written `Test` target replacing `ITest` | Fallout's `ITest` is VSTest-only until Fallout#674 lands; D11 already named this fallback |
 | CI reporting | `GitHubActionsTestLogger` (`--report-github`); no TRX | Per-failure annotations and a job summary, verified; once `ITest` is gone nothing reads a TRX |
