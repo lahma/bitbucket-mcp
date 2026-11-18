@@ -14,6 +14,14 @@
 # which the same tag triggers independently - a nuget.org outage must not be able to hold up a
 # release, and the trusted publishing policy names one workflow file, which is that one and not
 # this one.
+#
+# linux-x64 runs on ubuntu-24.04, not ubuntu-latest: a Native AOT binary links against the build
+# host's glibc, and the released binaries need GLIBC_2.34 at most. ubuntu-latest moving to a newer
+# image would raise that floor without anything failing, so the image is pinned and the floor is
+# asserted after the smoke test. When 24.04 is retired, the check is what turns red.
+#
+# workflow_dispatch is a dry run: every leg builds, smoke-tests and checks its binary, and the
+# release job is skipped because there is no tag.
 
 name: release
 
@@ -21,6 +29,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             rid: linux-x64
           - os: ubuntu-24.04-arm
             rid: linux-arm64
@@ -57,6 +66,15 @@ jobs:
         run: dotnet tool restore
       - name: 'Run: SmokeTest'
         run: dotnet fallout SmokeTest --runtime ${{ matrix.rid }}
+      - name: 'Check: glibc floor'
+        if: startsWith(matrix.rid, 'linux-')
+        run: |
+          max=$(objdump -T artifacts/publish/${{ matrix.rid }}/bitbucket-mcp | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "bitbucket-mcp requires $max"
+          if [ "$(printf '%s\nGLIBC_2.34\n' "$max" | sort -V | tail -1)" != "GLIBC_2.34" ]; then
+            echo "::error::The binary needs $max, above the GLIBC_2.34 floor the released binaries keep."
+            exit 1
+          fi
       - name: 'Upload: archives'
         uses: actions/upload-artifact@v7
         with:
@@ -67,6 +85,7 @@ jobs:
   release:
     name: release
     needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

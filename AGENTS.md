@@ -37,7 +37,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D22)
+## Design decisions (D1–D23)
 
 | # | Decision |
 |---|---|
@@ -51,7 +51,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D8 | **Static tool methods**; `BitbucketApiClient` as a plain parameter (DI-bound via `IServiceProviderIsService`, excluded from the schema); avoids per-call instance activation and is directly unit-testable. |
 | D9 | No `RuntimeIdentifiers` in the csproj (would pull ILCompiler packs per RID on every restore); the RID list lives in `Build.cs` and the release matrix, and reaches publish via `-r`. |
 | D10 | No `PublishSingleFile` (ignored under AOT). |
-| D11 | **xunit.v3 + `xunit.runner.visualstudio` + `Microsoft.NET.Test.Sdk`** (VSTest bridge) so the stock Fallout `ITest` component works unmodified. The bridge is not incidental, it *is* the interface: Fallout 10.4.0's `ITest` passes `--logger trx;LogFileName=` and `--logger GitHubActions`, probes each test project for a `GitHubActionsTestLogger` reference, and parses the resulting TRX against the VSTest `TeamTest/2010` schema. **This is what holds the pins at xunit.v3 3.2.2** — 4.0.0 drops VSTest-mode support, and taking it would silently degrade CI reporting to "the run passed or it did not". Fallback if it breaks: a custom Test target with `--report-trx`, plus a decision about what replaces the GitHub Actions annotations. Revisit when Fallout's `ITest` speaks Microsoft.Testing.Platform natively. |
+| D11 | **NUnit 5 on Microsoft.Testing.Platform (MTP), run by a hand-written `Test` target.** `global.json` selects MTP for `dotnet test`, and `NUnit3TestAdapter` is the runner through `EnableNUnitRunner`. MTP's `dotnet test` is a different command line from VSTest's — `--project` instead of a positional path, no `--logger`, no TRX by default — and Fallout's `ITest` generates only the VSTest one (Fallout-build/Fallout#674, open), so `Build.cs` owns `Test` instead of taking it from Fallout.Components. On GitHub Actions it adds `--report-github` (`GitHubActionsTestLogger`), which annotates each failing test at its file and line and writes a job summary of the failures — the reporting the VSTest bridge was kept for, and which this repository never actually had, since nothing referenced the logger. Two assembly attributes in `TestAssembly.cs` keep the contract the suite was written for under xunit: a fresh fixture instance per test case, and fixtures in parallel. The test project runs with `InvariantGlobalization` like the server, which also makes NUnit's string constraints — culture-sensitive by default — ordinal. Revisit the hand-written target when Fallout speaks MTP. |
 | D12 | OAuth loopback callback via a raw **`TcpListener`** bound to both `127.0.0.1` and `::1` (~60 auditable lines, no `HttpListener` platform quirks). |
 | D13 | **Confidential OAuth client** (key + secret, Basic auth at the token endpoint), no PKCE (unconfirmed for Bitbucket Cloud; leave an internal hook). The user creates their own consumer. |
 | D14 | Access-token lifetime always taken from `expires_in` (minus 60 s skew) — never hard-coded; Atlassian's docs contradict themselves (1 h vs 2 h). |
@@ -63,6 +63,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D20 | **The pipeline surface is read-only, and 403s are scope-aware per tool.** Running or stopping a pipeline needs `pipeline:write` on top of the read scope and spends build minutes; the problem being solved is diagnosis. Reading pipelines needs `pipeline` / `read:pipeline:bitbucket`, which **no existing user's credential has**, so `ToolCallContext` carries a `ToolScope` and `ToolErrors.Forbidden` branches on it: the pipeline message names that scope in both vocabularies, names the `logout`/`login` step (widening a consumer does not widen a cached grant), and offers `listCodeInsights` as a fallback. The pull-request branch is byte-identical to what it was, so nobody else's 403 grew a line. |
 | D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. | |
 | D22 | **The plugin manifest writes to `CLAUDE_PLUGIN_OPTION_*`, never to the plain variable names.** A Claude Code manifest maps every declared option into the server's environment through a `${user_config.X}` placeholder, and an option the user never filled in substitutes as the **empty string** rather than being omitted — so mapping it onto `BITBUCKET_ACCESS_TOKEN` set that variable to `""` in the child process and shadowed a value the user already had ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). With three auth mechanisms in a precedence chain the failure was silent: it demoted the caller to the next mechanism, or off the end of the chain into a browser sign-in nobody asked for. `BitbucketMcpOptions.ReadConfigured` therefore reads the prefixed name first, blank treated as absent, falling back to the plain one; a filled prompt still wins and a blank one changes nothing. `${user_config.KEY:-fallback}` is **not** an alternative — the substituter's capture group is `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, is undefined, and throws, and the plugin fails to load. `PluginManifestTests` fails if the manifest is ever mapped back.
+| D23 | **The target framework stays `net10.0` (LTS) through .NET 11.** Measured 2026-11-18 on SDK 10.0.404 and 11.0.100: `net11.0` grows the win-x64 AOT binary 2% (all of it runtime), leaves startup unchanged, and ends support the same month (2028-11). Its one gain — the server's restore graph falling from 21 packages to 12, because .NET 11 moved `Microsoft.Extensions.*.Abstractions`, `Options` and `Primitives` into the shared framework — exists only with `net11.0` *alone*, and `net11.0` alone breaks `dnx` (and with it the Claude Code plugin) for anyone without the .NET 11 runtime; carrying `net10.0` as well keeps the old graph. Moving also needs `NuGet.Frameworks` 8.0.0 pinned in `build/` (SDK 11's MSBuild asks for 7.11.0.0, Fallout brings 7.9.0). Revisit at .NET 12 LTS, or when RID-specific AOT tool packages decouple `dnx` from the installed runtime. |
 
 ### Risks carried (R3–R5)
 
@@ -100,10 +101,10 @@ four of them fail the build:
 
 1. this table;
 2. `ToolInventoryTests` — `ExpectedToolNames` (ordinal order), the hard-coded tool and class counts,
-   and the title and annotation theories;
+   and the title and annotation test cases;
 3. `Build.cs`'s `ExpectedToolNames`, which `SmokeTest` checks against a live `tools/list`;
 4. the shipped skill;
-5. `ToolSchemaTests`'s per-tool `[InlineData]` row — a second inventory, of exact parameter names;
+5. `ToolSchemaTests`'s per-tool `[TestCase]` row — a second inventory, of exact parameter names;
 6. `README.md`'s tool table **and** its tool count in the opening paragraph, which nothing enforces
    at all and which is therefore the one that actually drifts.
 
@@ -217,13 +218,13 @@ the first call belongs in `ServerInstructions`.
 Complete, as of the initial implementation. Versions are centrally pinned in
 `Directory.Packages.props`.
 
-- `src/Bitbucket.Mcp`: `ModelContextProtocol` (pinned exactly `[2.1.0]`),
+- `src/Bitbucket.Mcp`: `ModelContextProtocol` (pinned exactly, `[2.4.0]`),
   `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Logging.Console`,
   `System.Security.Cryptography.ProtectedData` (DPAPI; Windows-only code path).
-- `tests/`: `xunit.v3`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk`. No mocking or
-  assertion libraries — use the hand-rolled `StubHttpMessageHandler`.
-- `build/`: `Fallout.Common` + `Fallout.Components` 10.4.0 and `NuGet.Frameworks` 7.9.0 (see
-  *Package budget changes*; the build project opts out of CPM).
+- `tests/`: `NUnit`, `NUnit3TestAdapter` (the MTP runner), `NUnit.Analyzers`, `GitHubActionsTestLogger`
+  (D11). No mocking or assertion libraries — use the hand-rolled `StubHttpMessageHandler`, and
+  `Expect` for the few assertions that hand back what they checked.
+- `build/`: `Fallout.Common` + `Fallout.Components` 10.5.0 (the build project opts out of CPM).
 
 SourceLink needs no package reference — it is in-SDK on .NET 8 and later.
 
@@ -258,15 +259,34 @@ which this repository does not reference, and the server speaks stdio only. Veri
 (which asserts every tool name, title, annotation and generated schema *through* the SDK) and by
 `SmokeTest` (a real `tools/list` against the AOT binary).
 
-**Held deliberately, and not stale:** `xunit.v3` / `xunit.runner.visualstudio` stay at 3.2.2 / 3.1.5
-because 4.0.0 drops the VSTest bridge D11 depends on. `Fallout.Common` / `Fallout.Components` stay
-at 10.4.0 because 11.0.x is the *edge* channel and sorts higher only as a versioning artifact — see
-*Build*. `NuGet.Frameworks` stays pinned because its documented exit condition is unmet: both
-Fallout 10.4.0 and 11.0.18 still resolve `NuGet.Packaging` 6.14.3.
+**2026-11-18 — Fallout 10.5.0, the `NuGet.Frameworks` pin removed, the tests on NUnit/MTP.**
+- `Fallout.Common` / `Fallout.Components` / `fallout.globaltool` 10.4.0 → 10.5.0. 10.4.0 restores
+  `System.Security.Cryptography.Pkcs` / `Xml` 10.0.10 into `build/`, which now carry NU1902/NU1903
+  advisories; 10.5.0 brings 10.0.13. It regenerates both workflows unchanged; only
+  `.fallout/build.schema.json` moves.
+- The `NuGet.Frameworks` 7.9.0 reference (2026-08-17) is gone: its exit condition is met, because
+  Fallout 10.5.0 brings `NuGet.Packaging` 7.9.0, the version SDK 10.0.4xx binds. Verified on the path
+  that used to fail — `dotnet fallout Test` with `GITHUB_ACTIONS=true` — with app-local
+  `NuGet.Frameworks` 7.9.0.0. On SDK 11 the pin would be needed again, at 8.0.0 (D23).
+- Tests: `xunit.v3`, `xunit.runner.visualstudio` and `Microsoft.NET.Test.Sdk` out; `NUnit` 5.0.0,
+  `NUnit3TestAdapter` 6.3.1, `NUnit.Analyzers` 4.15.0 and `GitHubActionsTestLogger` 3.0.5 in (D11).
+  The test project's restore graph goes from 42 packages to 34. `GitHubActionsTestLogger` is the
+  one third-party addition; it is test-only, and it is what turns a failure into an annotation.
+  `Microsoft.ApplicationInsights` stays in the graph, through MTP's telemetry extension, which
+  `NUnit3TestAdapter` requires; the `Test` target sets `TESTINGPLATFORM_TELEMETRY_OPTOUT`.
+- `ModelContextProtocol` `[2.2.0]` → `[2.4.0]`, `Microsoft.Extensions.*` /
+  `System.Security.Cryptography.ProtectedData` 10.0.12 → 10.0.15. 2.3.0 makes the client's
+  `ServerInfo` nullable and keeps `tools/list` in registration order; 2.4.0 fixes legacy output
+  schemas for delegating tools. The server builds with no new warning, every schema test passes,
+  and the AOT binary grows 14 KB.
+
+**Held deliberately, and not stale:** `Fallout.Common` / `Fallout.Components` stay on the 10.x line
+because 11.0.x is the *edge* channel and sorts higher only as a versioning artifact — see *Build*.
+The target framework stays `net10.0` (D23).
 
 The trusted-publishing exchange (D17) uses `Fallout.Common.Utilities.Net`
 (`CreateRequest` / `WithBearerAuthentication` / `WithJsonContent` / `GetResponse` /
-`AssertResponse` / `AssertSuccessfulStatusCode` / `GetBodyAsJsonObject`), which arrives with `Fallout.Common` 10.4.0 as the
+`AssertResponse` / `AssertSuccessfulStatusCode` / `GetBodyAsJsonObject`), which arrives with `Fallout.Common` as the
 transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and nothing added to
 `src/` or `tests/`.
 
@@ -324,14 +344,15 @@ dropping the one sentence that explains the failure.
 
 ## Build
 
-The orchestrator is [Fallout](https://fallout.build) 10.4.0 (stable channel), the maintained
-hard fork of NUKE.
+The orchestrator is [Fallout](https://fallout.build) 10.5.0 (stable channel), the maintained
+hard fork of NUKE. 10.5.0 is also the first that starts when the build project targets `net11.0`
+(Fallout-build/Fallout#715) — keep that in mind before D23 is revisited.
 
-**10.4.0 is not stale, and 11.0.x is not an upgrade.** Fallout runs two channels: `11.0.x` is
-*edge* and `10.4.0` is *stable*, which is newer and a feature superset despite sorting lower. The
+**10.5.0 is not stale, and 11.0.x is not an upgrade.** Fallout runs two channels: `11.0.x` is
+*edge* and `10.x` is *stable*, which is newer and a feature superset despite sorting lower. The
 edge CLI ships under a different package id (`Fallout.Cli`), which is why `fallout.globaltool` has
 no 11.x and nothing is behind. Moving `build/` to 11.0.18 would reintroduce
-`System.Security.Cryptography.Xml` 10.0.6 (10.4.0 carries the patched 10.0.10), fail to compile
+`System.Security.Cryptography.Xml` 10.0.6 (10.5.0 carries the patched 10.0.13), fail to compile
 because `GitHubActionsAttribute.Env` — which `NUGET_USER` depends on — does not exist there, and
 regenerate both workflows backwards to `checkout@v6` / `setup-dotnet@v4` with the `*Action`
 override properties gone. Do not "update" it. The CLI is pinned in `.config/dotnet-tools.json` as `fallout.globaltool`
@@ -358,12 +379,13 @@ abort the build.
 ## Testing
 
 ```powershell
-.\build.ps1 Test                                   # the whole suite, via the orchestrator
-dotnet test tests\Bitbucket.Mcp.Tests               # the same tests, without a publish
-dotnet test tests\Bitbucket.Mcp.Tests --filter "FullyQualifiedName~Cursor"
+.\build.ps1 Test                                             # the whole suite, via the orchestrator
+dotnet test --project tests\Bitbucket.Mcp.Tests               # the same tests, without the build
+dotnet test --project tests\Bitbucket.Mcp.Tests --filter "FullyQualifiedName~Cursor"
 ```
 
-xunit.v3 with the `xunit.runner.visualstudio` VSTest bridge (D11). No mocking or assertion
+NUnit 5 on Microsoft.Testing.Platform (D11); `global.json` selects MTP, which is why the project is
+named with `--project`. No mocking or assertion
 libraries: HTTP is faked with the hand-rolled `StubHttpMessageHandler`, and fixtures are embedded
 resources. Because `JsonSerializerIsReflectionEnabledByDefault=false` is set in the test csproj as
 well (D7), a type missing from a `JsonSerializerContext` fails under `dotnet test` rather than
@@ -388,7 +410,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   that asserts no injected parameter (`client` / `options` / `cancellationToken`) leaks into an
   input schema, that every input *and* output property is camelCase and carries a description, that
   every tool has an object output schema, that every paginated result carries `nextCursor`, and
-  D6's resolver ordering (ours first, SDK second, chain read-only). Its per-tool `[InlineData]` row
+  D6's resolver ordering (ours first, SDK second, chain read-only). Its per-tool `[TestCase]` row
   is a second inventory — of exact parameter names, in declaration order — so a reordered parameter
   fails here and nowhere else.
 - **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
@@ -441,7 +463,7 @@ support) and runs five publish legs — one per RID, each on its own hardware �
 
 | RID | Runner |
 |---|---|
-| `linux-x64` | `ubuntu-latest` |
+| `linux-x64` | `ubuntu-24.04` |
 | `linux-arm64` | `ubuntu-24.04-arm` |
 | `win-x64` | `windows-latest` |
 | `win-arm64` | `windows-11-arm` |
@@ -452,6 +474,16 @@ so each leg compiles its own binary, speaks JSON-RPC to it *on the architecture 
 only then uploads the archive. **Never ship a binary that has not answered a handshake on its own
 architecture** — that is the whole reason the arm64 legs are not cross-compiled. `fail-fast` is off
 so one broken runtime cannot mask the state of the other four.
+
+The Linux legs also check the **glibc floor**. A Native AOT binary links against the build host's
+glibc, and the released binaries need `GLIBC_2.34` at most (read from the v1.2.1 binary's ELF
+version needs, 2026-11-18). `linux-x64` is therefore pinned to `ubuntu-24.04` rather than
+`ubuntu-latest`, which moved to 26.04, and a step after the smoke test fails the leg if `objdump -T`
+shows a newer `GLIBC_` version. When 24.04 is retired, that step is what turns red.
+
+`workflow_dispatch` runs the same five legs as a **dry run** — build, smoke test, glibc check — and
+skips the `release` job, which only runs for a `v` tag. Run it on a branch before tagging anything
+that changes the toolchain.
 
 `CHANGELOG.md` stays the version authority here too: `CreateGitHubRelease` refuses to publish
 unless `GITHUB_REF_NAME` equals `v{version parsed from CHANGELOG.md}`. To release, land the
@@ -467,9 +499,10 @@ Three properties of the release path were verified end to end by a throwaway `v0
   fallback is to cross-compile the affected RID from the x64 runner of the same OS with its smoke
   step skipped — and to mark it as unverified in both `release.yml` and here, because an
   unverified binary must not go out silently.
-- **R2 — the tar.gz exec bit: `CompressionExtensions.TarGZipTo` cannot be used.** It archives
-  through SharpZipLib's `TarEntry.CreateEntryFromFile`, which hard-codes *every* entry's mode to
-  `0700` instead of reading it off disk. That ships `LICENSE` and `README.md` executable and the
+- **R2 — the tar.gz exec bit: `CompressionExtensions.TarGZipTo` cannot be used.** Up to Fallout 10.4.0
+  it archived through SharpZipLib's `TarEntry.CreateEntryFromFile`, which hard-codes *every* entry's
+  mode to `0700` instead of reading it off disk; 10.5.0 moved it to SharpCompress, which nobody has
+  verified here. That ships `LICENSE` and `README.md` executable and the
   binary unreadable to anyone but the extracting user. `PublishAot` therefore invokes the `tar`
   CLI (`ProcessTasks.StartProcess`), which is present on the GitHub runners and in Git Bash. The
   released archives were downloaded and inspected: `-rwxr-xr-x` on `bitbucket-mcp`,

@@ -22,16 +22,15 @@ using Serilog;
 
 using static Fallout.Common.Tools.DotNet.DotNetTasks;
 
-using Project = Fallout.Solutions.Project;
-
 /// <summary>
 /// The Fallout orchestrator for bitbucket-mcp.
 /// </summary>
 /// <remarks>
-/// Restore / Compile / Test come from the Fallout.Components interfaces; only the two things
-/// that are specific to shipping a Native AOT MCP server are hand-written: <c>PublishAot</c>
-/// (publish + archive per RID) and <c>SmokeTest</c> (a real stdio JSON-RPC handshake against
-/// the published binary).
+/// Restore / Compile come from the Fallout.Components interfaces. Three targets are hand-written:
+/// <c>Test</c>, because Fallout's <c>ITest</c> speaks only VSTest and the suite runs on
+/// Microsoft.Testing.Platform (D11); and the two that are specific to shipping a Native AOT MCP
+/// server, <c>PublishAot</c> (publish + archive per RID) and <c>SmokeTest</c> (a real stdio
+/// JSON-RPC handshake against the published binary).
 /// </remarks>
 [ShutdownDotNetAfterServerBuild]
 partial class Build : FalloutBuild,
@@ -42,10 +41,9 @@ partial class Build : FalloutBuild,
     IHasGitRepository,
     IRestore,
     ICompile,
-    ITest,
     ICreateGitHubRelease
 {
-    public static int Main() => Execute<Build>(x => ((ITest)x).Test);
+    public static int Main() => Execute<Build>(x => x.Test);
 
     /// <summary>The binary's product name; also the MCP <c>serverInfo.name</c> asserted by SmokeTest.</summary>
     const string ProductName = "bitbucket-mcp";
@@ -99,6 +97,8 @@ partial class Build : FalloutBuild,
     AbsolutePath TestsDirectory => RootDirectory / "tests";
     // Spelled out rather than derived from ProductName: on Linux the path is case-sensitive.
     AbsolutePath ServerProject => SourceDirectory / "Bitbucket.Mcp" / "Bitbucket.Mcp.csproj";
+    AbsolutePath TestProject => TestsDirectory / "Bitbucket.Mcp.Tests" / "Bitbucket.Mcp.Tests.csproj";
+    AbsolutePath TestResultsDirectory => ArtifactsDirectory / "test-results";
     AbsolutePath ChangelogPath => RootDirectory / "CHANGELOG.md";
     AbsolutePath PublishDirectory => ArtifactsDirectory / "publish" / Runtime;
     AbsolutePath StagingDirectory => ArtifactsDirectory / "staging" / Runtime;
@@ -174,13 +174,34 @@ partial class Build : FalloutBuild,
             ArtifactsDirectory.CreateOrCleanDirectory();
         });
 
-    IEnumerable<Project> ITest.TestProjects => Solution.GetAllProjects("*.Tests");
-
     Configure<DotNetBuildSettings> ICompile.CompileSettings => _ => _
         .SetProperty("Version", Version);
 
-    Configure<DotNetTestSettings> ITest.TestSettings => _ => _
-        .SetProperty("Version", Version);
+    /// <remarks>
+    /// D11: the suite is NUnit on Microsoft.Testing.Platform, selected by global.json, whose
+    /// <c>dotnet test</c> is a different command line from VSTest's - <c>--project</c> instead of a
+    /// positional path, and no <c>--logger</c>. Fallout's <c>ITest</c> generates only the VSTest one
+    /// (Fallout-build/Fallout#674), so this target replaces it; switch back once Fallout speaks MTP.
+    /// On GitHub Actions <c>--report-github</c> (GitHubActionsTestLogger) annotates each failing
+    /// test and writes a job summary of the failures - passed and skipped tests are left out of it,
+    /// or it lists all several hundred of them on every green run.
+    /// </remarks>
+    Target Test => _ => _
+        .Description("Runs the NUnit suite on Microsoft.Testing.Platform")
+        .DependsOn<ICompile>(x => x.Compile)
+        .Executes(() =>
+        {
+            // MTP's telemetry extension comes with NUnit3TestAdapter; a build never reports usage.
+            Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
+
+            var configuration = ((IHasConfiguration) this).Configuration;
+            var reporting = GitHubActions.Instance == null
+                ? string.Empty
+                : "--report-github --report-github-summary-include-passed false --report-github-summary-include-skipped false";
+
+            DotNet($"test --project {TestProject} --configuration {configuration} --no-build " +
+                   $"--results-directory {TestResultsDirectory} {reporting:nq}");
+        });
 
     Target PublishAot => _ => _
         .Description("Publishes a Native AOT binary for --runtime and archives it into artifacts/archives")
@@ -218,12 +239,12 @@ partial class Build : FalloutBuild,
             }
             else
             {
-                // R2: NOT CompressionExtensions.TarGZipTo. It goes through SharpZipLib's
-                // TarEntry.CreateEntryFromFile, which hard-codes every entry's mode to 0700 instead of
-                // reading it off disk - the binary would come out of the archive unreadable by anyone
-                // but the extracting user, and LICENSE/README.md would come out executable. The tar CLI
-                // copies the real mode (0755 for a published AOT binary), and both the GitHub runners
-                // and Git Bash on Windows ship it. Files are named explicitly so the archive is flat.
+                // R2: the tar CLI, not CompressionExtensions.TarGZipTo. Up to Fallout 10.4.0 that helper
+                // went through SharpZipLib, which hard-coded every entry's mode to 0700 - the binary came
+                // out unreadable by anyone but the extracting user, and LICENSE/README.md executable.
+                // 10.5.0 moved it to SharpCompress, unverified here; the tar CLI copies the real mode
+                // (0755 for a published AOT binary), was verified on every released archive, and ships
+                // on the GitHub runners and in Git Bash. Files are named explicitly so the archive is flat.
                 ProcessTasks
                     .StartProcess("tar",
                         $"-czf {ArchiveFile} -C {StagingDirectory} {ExecutableName} LICENSE README.md")
@@ -262,10 +283,16 @@ partial class Build : FalloutBuild,
             Assert.True(toolNames.SequenceEqual(expected, StringComparer.Ordinal),
                 $"tools/list returned [{string.Join(", ", toolNames)}], expected [{string.Join(", ", expected)}]");
 
-            Log.Information("Handshake OK: {Server} exposed {Count} tool(s)", serverName, toolNames.Length);
+            // Every session that attaches the server pays for this payload in context, so its size is
+            // reported on every build: a tool or description that grows it shows up here first.
+            var toolsListBytes = Encoding.UTF8.GetByteCount(responses[ToolsListId].GetProperty("result").GetRawText());
+
+            Log.Information("Handshake OK: {Server} exposed {Count} tool(s), tools/list {Bytes} bytes",
+                serverName, toolNames.Length, toolsListBytes);
             ReportSummary(_ => _
                 .AddPair("Server", serverName)
-                .AddPair("Tools", toolNames.Length.ToString()));
+                .AddPair("Tools", toolNames.Length.ToString())
+                .AddPair("tools/list bytes", toolsListBytes.ToString()));
         });
 
     const int InitializeId = 1;

@@ -3,7 +3,6 @@ using System.Text;
 
 using Bitbucket.Mcp.Diffs;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Diffs;
 
@@ -49,7 +48,7 @@ public sealed class InlineAnchorResolverTests
     // codeSnippet — happy paths
     // -----------------------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public void UniqueSnippetOnAnAddedLineAnchorsToTheNewSide()
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -57,19 +56,19 @@ public sealed class InlineAnchorResolverTests
             ReportPath,
             codeSnippet: "foreach (var item in Items)");
 
-        Assert.Equal(DiffLineType.Added, anchor.LineType);
-        Assert.Equal(13, anchor.Line); // fixture line 10
-        Assert.Equal(ReportPath, anchor.Inline.Path);
-        Assert.Equal(13, anchor.Inline.To);
-        Assert.Null(anchor.Inline.From);
-        Assert.Null(anchor.Inline.StartTo);
-        Assert.Null(anchor.Inline.StartFrom);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Added));
+        Assert.That(anchor.Line, Is.EqualTo(13)); // fixture line 10
+        Assert.That(anchor.Inline.Path, Is.EqualTo(ReportPath));
+        Assert.That(anchor.Inline.To, Is.EqualTo(13));
+        Assert.That(anchor.Inline.From, Is.Null);
+        Assert.That(anchor.Inline.StartTo, Is.Null);
+        Assert.That(anchor.Inline.StartFrom, Is.Null);
 
         // The matched text keeps the original indentation and loses only the "+" marker.
-        Assert.Equal("        foreach (var item in Items)", anchor.MatchedText);
+        Assert.That(anchor.MatchedText, Is.EqualTo("        foreach (var item in Items)"));
     }
 
-    [Fact]
+    [Test]
     public void ExactMatchWinsOverContainmentSoTheRemovedLineIsChosen()
     {
         // "return total;" is exactly the removed line (fixture 14, old 17) and a prefix of the
@@ -77,38 +76,37 @@ public sealed class InlineAnchorResolverTests
         // match and it is on the old side.
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "return total;");
 
-        Assert.Equal(DiffLineType.Removed, anchor.LineType);
-        Assert.Equal(17, anchor.Line);
-        Assert.Equal(17, anchor.Inline.From);
-        Assert.Null(anchor.Inline.To);
-        Assert.Equal("        return total;", anchor.MatchedText);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Removed));
+        Assert.That(anchor.Line, Is.EqualTo(17));
+        Assert.That(anchor.Inline.From, Is.EqualTo(17));
+        Assert.That(anchor.Inline.To, Is.Null);
+        Assert.That(anchor.MatchedText, Is.EqualTo("        return total;"));
     }
 
-    [Fact]
+    [Test]
     public void WithoutAnExactMatchTheSameTwoLinesAreAmbiguous()
     {
         // The counterpart of the test above: "return total" (no semicolon) is equal to neither
         // line, so the containment tier runs and finds both.
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "return total"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "return total"));
 
-        Assert.Contains("matches 2 places", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 17 before the change (lineType=REMOVED): return total;", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 17 after the change (lineType=ADDED): return total; // fixed", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("matches 2 places"));
+        Assert.That(exception.Message, Does.Contain("line 17 before the change (lineType=REMOVED): return total;"));
+        Assert.That(exception.Message, Does.Contain("line 17 after the change (lineType=ADDED): return total; // fixed"));
     }
 
-    [Fact]
+    [Test]
     public void ContainmentTierMatchesASubstringOfAContextLine()
     {
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "item.Value");
 
-        Assert.Equal(DiffLineType.Context, anchor.LineType);
-        Assert.Equal(15, anchor.Line); // fixture line 12, context, new 15
-        Assert.Equal(15, anchor.Inline.To);
-        Assert.Null(anchor.Inline.From);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Context));
+        Assert.That(anchor.Line, Is.EqualTo(15)); // fixture line 12, context, new 15
+        Assert.That(anchor.Inline.To, Is.EqualTo(15));
+        Assert.That(anchor.Inline.From, Is.Null);
     }
 
-    [Fact]
+    [Test]
     public void MultiLineSnippetMatchesAConsecutiveRunAndSpansIt()
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -118,18 +116,16 @@ public sealed class InlineAnchorResolverTests
 
         // Fixture lines 21-22: both added, new 43 and new 44. The run's last line is the anchor,
         // the first is the start of the range.
-        Assert.Equal(DiffLineType.Added, anchor.LineType);
-        Assert.Equal(44, anchor.Line);
-        Assert.Equal(44, anchor.Inline.To);
-        Assert.Equal(43, anchor.Inline.StartTo);
-        Assert.Null(anchor.Inline.From);
-        Assert.Null(anchor.Inline.StartFrom);
-        Assert.Equal(
-            "        Console.WriteLine(\"done\");\n        Console.WriteLine(\"extra\");",
-            anchor.MatchedText);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Added));
+        Assert.That(anchor.Line, Is.EqualTo(44));
+        Assert.That(anchor.Inline.To, Is.EqualTo(44));
+        Assert.That(anchor.Inline.StartTo, Is.EqualTo(43));
+        Assert.That(anchor.Inline.From, Is.Null);
+        Assert.That(anchor.Inline.StartFrom, Is.Null);
+        Assert.That(anchor.MatchedText, Is.EqualTo("        Console.WriteLine(\"done\");\n        Console.WriteLine(\"extra\");"));
     }
 
-    [Fact]
+    [Test]
     public void SnippetCopiedWithItsDiffMarkerStillMatches()
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -137,31 +133,29 @@ public sealed class InlineAnchorResolverTests
             ReportPath,
             codeSnippet: "+        Console.WriteLine(\"extra\");");
 
-        Assert.Equal(DiffLineType.Added, anchor.LineType);
-        Assert.Equal(44, anchor.Line);
-        Assert.Equal(44, anchor.Inline.To);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Added));
+        Assert.That(anchor.Line, Is.EqualTo(44));
+        Assert.That(anchor.Inline.To, Is.EqualTo(44));
     }
 
-    [Fact]
+    [Test]
     public void AmbiguousSnippetListsEveryCandidateWithItsLineNumber()
     {
         // Fixture line 20 (context, new 42) and line 21 (added, new 43) are the same text.
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "Console.WriteLine(\"done\");"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "Console.WriteLine(\"done\");"));
 
-        Assert.Contains("matches 2 places", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 42 after the change (lineType=CONTEXT)", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 43 after the change (lineType=ADDED)", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Re-send the same codeSnippet together with line", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("matches 2 places"));
+        Assert.That(exception.Message, Does.Contain("line 42 after the change (lineType=CONTEXT)"));
+        Assert.That(exception.Message, Does.Contain("line 43 after the change (lineType=ADDED)"));
+        Assert.That(exception.Message, Does.Contain("Re-send the same codeSnippet together with line"));
     }
 
     /// <summary>
     /// The tie-breaker the ambiguity error asks for: the same snippet plus one of the offered line
     /// numbers. 42 is the context line (fixture 20), 43 the added one (fixture 21).
     /// </summary>
-    [Theory]
-    [InlineData(42, "CONTEXT")]
-    [InlineData(43, "ADDED")]
+    [TestCase(42, "CONTEXT")]
+    [TestCase(43, "ADDED")]
     public void LineBreaksTheTieBetweenSeveralSnippetMatches(int line, string expectedType)
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -170,12 +164,12 @@ public sealed class InlineAnchorResolverTests
             codeSnippet: "Console.WriteLine(\"done\");",
             line: line);
 
-        Assert.Equal(ParseLineType(expectedType), anchor.LineType);
-        Assert.Equal(line, anchor.Line);
-        Assert.Equal(line, anchor.Inline.To);
+        Assert.That(anchor.LineType, Is.EqualTo(ParseLineType(expectedType)));
+        Assert.That(anchor.Line, Is.EqualTo(line));
+        Assert.That(anchor.Inline.To, Is.EqualTo(line));
     }
 
-    [Fact]
+    [Test]
     public void SnippetPlusStartLineProducesAMultiLineAnchor()
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -184,15 +178,15 @@ public sealed class InlineAnchorResolverTests
             codeSnippet: "Console.WriteLine(\"extra\");",
             startLine: 42);
 
-        Assert.Equal(44, anchor.Inline.To);
-        Assert.Equal(42, anchor.Inline.StartTo);
+        Assert.That(anchor.Inline.To, Is.EqualTo(44));
+        Assert.That(anchor.Inline.StartTo, Is.EqualTo(42));
     }
 
     /// <summary>
     /// The snippet picks the side, so <c>startLine</c> is read on that side too: "return total;"
     /// resolves to the removed line (old 17), and old 13 is a line the diff shows before the change.
     /// </summary>
-    [Fact]
+    [Test]
     public void SnippetOnTheOldSideTakesItsStartLineFromTheOldSide()
     {
         var anchor = InlineAnchorResolver.Resolve(
@@ -201,60 +195,60 @@ public sealed class InlineAnchorResolverTests
             codeSnippet: "return total;",
             startLine: 13);
 
-        Assert.Equal(17, anchor.Inline.From);
-        Assert.Equal(13, anchor.Inline.StartFrom);
-        Assert.Null(anchor.Inline.To);
-        Assert.Null(anchor.Inline.StartTo);
+        Assert.That(anchor.Inline.From, Is.EqualTo(17));
+        Assert.That(anchor.Inline.StartFrom, Is.EqualTo(13));
+        Assert.That(anchor.Inline.To, Is.Null);
+        Assert.That(anchor.Inline.StartTo, Is.Null);
     }
 
     // -----------------------------------------------------------------------------------------
     // Explicit line + lineType
     // -----------------------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public void AddedLineTypeAnchorsToTheNewSide()
     {
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 13, lineType: DiffLineType.Added);
 
-        Assert.Equal(13, anchor.Inline.To);
-        Assert.Null(anchor.Inline.From);
-        Assert.Equal(DiffLineType.Added, anchor.LineType);
-        Assert.Equal("        foreach (var item in Items)", anchor.MatchedText);
+        Assert.That(anchor.Inline.To, Is.EqualTo(13));
+        Assert.That(anchor.Inline.From, Is.Null);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Added));
+        Assert.That(anchor.MatchedText, Is.EqualTo("        foreach (var item in Items)"));
     }
 
-    [Fact]
+    [Test]
     public void RemovedLineTypeAnchorsToTheOldSide()
     {
         // Old line 13 and new line 13 are different lines of the diff (fixture 9 and 10); the side
         // is what tells them apart.
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 13, lineType: DiffLineType.Removed);
 
-        Assert.Equal(13, anchor.Inline.From);
-        Assert.Null(anchor.Inline.To);
-        Assert.Equal(DiffLineType.Removed, anchor.LineType);
-        Assert.Equal("        foreach (var item in items)", anchor.MatchedText);
+        Assert.That(anchor.Inline.From, Is.EqualTo(13));
+        Assert.That(anchor.Inline.To, Is.Null);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Removed));
+        Assert.That(anchor.MatchedText, Is.EqualTo("        foreach (var item in items)"));
     }
 
-    [Fact]
+    [Test]
     public void ContextLineTypeAnchorsToTheNewSide()
     {
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 42, lineType: DiffLineType.Context);
 
-        Assert.Equal(42, anchor.Inline.To);
-        Assert.Null(anchor.Inline.From);
-        Assert.Equal(DiffLineType.Context, anchor.LineType);
+        Assert.That(anchor.Inline.To, Is.EqualTo(42));
+        Assert.That(anchor.Inline.From, Is.Null);
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Context));
     }
 
-    [Fact]
+    [Test]
     public void LineTypeDefaultsToAdded()
     {
         var anchor = InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 13);
 
-        Assert.Equal(13, anchor.Inline.To);
-        Assert.Equal(DiffLineType.Added, anchor.LineType);
+        Assert.That(anchor.Inline.To, Is.EqualTo(13));
+        Assert.That(anchor.LineType, Is.EqualTo(DiffLineType.Added));
     }
 
-    [Fact]
+    [Test]
     public void ExplicitStartLineSpansTheRangeOnTheRequestedSide()
     {
         var newSide = InlineAnchorResolver.Resolve(
@@ -264,9 +258,9 @@ public sealed class InlineAnchorResolverTests
             lineType: DiffLineType.Context,
             startLine: 42);
 
-        Assert.Equal(45, newSide.Inline.To);
-        Assert.Equal(42, newSide.Inline.StartTo);
-        Assert.Null(newSide.Inline.StartFrom);
+        Assert.That(newSide.Inline.To, Is.EqualTo(45));
+        Assert.That(newSide.Inline.StartTo, Is.EqualTo(42));
+        Assert.That(newSide.Inline.StartFrom, Is.Null);
 
         var oldSide = InlineAnchorResolver.Resolve(
             Anchors,
@@ -275,77 +269,71 @@ public sealed class InlineAnchorResolverTests
             lineType: DiffLineType.Removed,
             startLine: 13);
 
-        Assert.Equal(17, oldSide.Inline.From);
-        Assert.Equal(13, oldSide.Inline.StartFrom);
-        Assert.Null(oldSide.Inline.StartTo);
+        Assert.That(oldSide.Inline.From, Is.EqualTo(17));
+        Assert.That(oldSide.Inline.StartFrom, Is.EqualTo(13));
+        Assert.That(oldSide.Inline.StartTo, Is.Null);
     }
 
     // -----------------------------------------------------------------------------------------
     // Paths
     // -----------------------------------------------------------------------------------------
 
-    [Theory]
-    [InlineData("./src/Report.cs")]
-    [InlineData("src\\Report.cs")]
-    [InlineData("/src/Report.cs")]
-    [InlineData("SRC/report.CS")]
-    [InlineData("  src/Report.cs  ")]
+    [TestCase("./src/Report.cs")]
+    [TestCase("src\\Report.cs")]
+    [TestCase("/src/Report.cs")]
+    [TestCase("SRC/report.CS")]
+    [TestCase("  src/Report.cs  ")]
     public void CallerReshapedPathsResolveToTheCanonicalDiffPath(string path)
     {
         var anchor = InlineAnchorResolver.Resolve(Anchors, path, codeSnippet: "item.Value");
 
-        Assert.Equal(ReportPath, anchor.Inline.Path);
+        Assert.That(anchor.Inline.Path, Is.EqualTo(ReportPath));
     }
 
-    [Fact]
+    [Test]
     public void UnknownPathListsThePathsTheDiffDoesContain()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(DiffFixtures.Split(DiffFixtures.MultiFile), "src/Nope.cs", codeSnippet: "anything"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(DiffFixtures.Split(DiffFixtures.MultiFile), "src/Nope.cs", codeSnippet: "anything"));
 
-        Assert.Contains("This diff contains no file named src/Nope.cs.", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("src/Calculator.cs", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("docs/new notes.md", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("assets/icon.ico", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Use a path exactly as the diff spells it.", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("This diff contains no file named src/Nope.cs."));
+        Assert.That(exception.Message, Does.Contain("src/Calculator.cs"));
+        Assert.That(exception.Message, Does.Contain("docs/new notes.md"));
+        Assert.That(exception.Message, Does.Contain("assets/icon.ico"));
+        Assert.That(exception.Message, Does.Contain("Use a path exactly as the diff spells it."));
     }
 
-    [Fact]
+    [Test]
     public void EmptyDiffSaysToFetchOneFirst()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve([], "src/Report.cs", codeSnippet: "anything"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve([], "src/Report.cs", codeSnippet: "anything"));
 
-        Assert.Contains("The diff is empty", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("getPullRequestDiff", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("The diff is empty"));
+        Assert.That(exception.Message, Does.Contain("getPullRequestDiff"));
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
+    [TestCase("")]
+    [TestCase("   ")]
     public void BlankPathIsRejected(string path)
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, path, codeSnippet: "item.Value"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, path, codeSnippet: "item.Value"));
 
-        Assert.Contains("needs the path of the file", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("needs the path of the file"));
     }
 
     // -----------------------------------------------------------------------------------------
     // Error paths
     // -----------------------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public void BinaryFileHasNoLinesToAnchorTo()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(DiffFixtures.Split(DiffFixtures.MultiFile), "assets/logo.png", codeSnippet: "anything"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(DiffFixtures.Split(DiffFixtures.MultiFile), "assets/logo.png", codeSnippet: "anything"));
 
-        Assert.Contains("assets/logo.png is a binary file", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("comment on the pull request itself", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("assets/logo.png is a binary file"));
+        Assert.That(exception.Message, Does.Contain("comment on the pull request itself"));
     }
 
-    [Fact]
+    [Test]
     public void FileWhoseHunksWereNotIncludedSaysToFetchThem()
     {
         var files = UnifiedDiffParser.Split(
@@ -354,11 +342,10 @@ public sealed class InlineAnchorResolverTests
             + "--- a/src/Empty.cs\n"
             + "+++ b/src/Empty.cs\n");
 
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(files, "src/Empty.cs", codeSnippet: "anything"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(files, "src/Empty.cs", codeSnippet: "anything"));
 
-        Assert.Contains("contains no changed lines", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("paths=[\"src/Empty.cs\"]", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("contains no changed lines"));
+        Assert.That(exception.Message, Does.Contain("paths=[\"src/Empty.cs\"]"));
     }
 
     /// <summary>
@@ -369,24 +356,23 @@ public sealed class InlineAnchorResolverTests
     /// <c>return total; // fixed</c> (5 each), which beat the two <c>foreach</c> lines (4 each) —
     /// so the last <c>foreach</c> line falls off the end of the list.
     /// </summary>
-    [Fact]
+    [Test]
     public void NoMatchListsTheFiveNearestLines()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "total = item.Value + total;"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, codeSnippet: "total = item.Value + total;"));
 
-        Assert.Contains("No line in the diff of src/Report.cs matches that codeSnippet", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("The closest lines it does show are:", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(5, CountOccurrences(exception.Message, "\n  line "));
+        Assert.That(exception.Message, Does.Contain("No line in the diff of src/Report.cs matches that codeSnippet"));
+        Assert.That(exception.Message, Does.Contain("The closest lines it does show are:"));
+        Assert.That(CountOccurrences(exception.Message, "\n  line "), Is.EqualTo(5));
 
-        Assert.Contains("line 15 after the change (lineType=CONTEXT): total += item.Value;", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 12 after the change (lineType=CONTEXT): var total = 0;", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 17 before the change (lineType=REMOVED): return total;", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 17 after the change (lineType=ADDED): return total; // fixed", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("line 13 before the change (lineType=REMOVED): foreach (var item in items)", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("line 15 after the change (lineType=CONTEXT): total += item.Value;"));
+        Assert.That(exception.Message, Does.Contain("line 12 after the change (lineType=CONTEXT): var total = 0;"));
+        Assert.That(exception.Message, Does.Contain("line 17 before the change (lineType=REMOVED): return total;"));
+        Assert.That(exception.Message, Does.Contain("line 17 after the change (lineType=ADDED): return total; // fixed"));
+        Assert.That(exception.Message, Does.Contain("line 13 before the change (lineType=REMOVED): foreach (var item in items)"));
     }
 
-    [Fact]
+    [Test]
     public void AmbiguityListIsCappedAtTwentyCandidates()
     {
         var builder = new StringBuilder();
@@ -403,47 +389,39 @@ public sealed class InlineAnchorResolverTests
 
         var files = UnifiedDiffParser.Split(builder.ToString());
 
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(files, "src/Repeat.cs", codeSnippet: "Log(\"x\");"));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(files, "src/Repeat.cs", codeSnippet: "Log(\"x\");"));
 
-        Assert.Contains("matches 25 places", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(20, CountOccurrences(exception.Message, "\n  line "));
-        Assert.Contains("… and 5 more.", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("matches 25 places"));
+        Assert.That(CountOccurrences(exception.Message, "\n  line "), Is.EqualTo(20));
+        Assert.That(exception.Message, Does.Contain("… and 5 more."));
     }
 
-    [Theory]
-    [InlineData(19, "ADDED", "the file after the change")]
-    [InlineData(39, "CONTEXT", "the file after the change")]
-    [InlineData(45, "REMOVED", "the file before the change")]
+    [TestCase(19, "ADDED", "the file after the change")]
+    [TestCase(39, "CONTEXT", "the file after the change")]
+    [TestCase(45, "REMOVED", "the file before the change")]
     public void LineOutsideTheDiffListsWhatBothSidesDoShow(int line, string lineType, string side)
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: line, lineType: ParseLineType(lineType)));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: line, lineType: ParseLineType(lineType)));
 
-        Assert.Contains(
-            string.Create(CultureInfo.InvariantCulture, $"line={line} is not a line the diff of src/Report.cs shows for {side}"),
-            exception.Message,
-            StringComparison.Ordinal);
-        Assert.Contains("Lines available after the change (lineType=ADDED or CONTEXT): 10-18, 40-46", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Lines available before the change (lineType=REMOVED): 10-18, 40-44", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain(string.Create(CultureInfo.InvariantCulture, $"line={line} is not a line the diff of src/Report.cs shows for {side}")));
+        Assert.That(exception.Message, Does.Contain("Lines available after the change (lineType=ADDED or CONTEXT): 10-18, 40-46"));
+        Assert.That(exception.Message, Does.Contain("Lines available before the change (lineType=REMOVED): 10-18, 40-44"));
     }
 
-    [Fact]
+    [Test]
     public void StartLineMustBeSmallerThanTheCommentedLine()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 45, lineType: DiffLineType.Context, startLine: 45));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 45, lineType: DiffLineType.Context, startLine: 45));
 
-        Assert.Contains("startLine (45) must be smaller than the commented line (45)", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("startLine (45) must be smaller than the commented line (45)"));
     }
 
-    [Fact]
+    [Test]
     public void StartLineMustAlsoBeVisibleInTheDiff()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 45, lineType: DiffLineType.Context, startLine: 19));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: 45, lineType: DiffLineType.Context, startLine: 19));
 
-        Assert.Contains("startLine=19 is not a line the diff of src/Report.cs shows", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("startLine=19 is not a line the diff of src/Report.cs shows"));
     }
 
     /// <summary>
@@ -451,82 +429,72 @@ public sealed class InlineAnchorResolverTests
     /// resolves to new line 44, but 19 is in neither hunk, so a comment starting there would be
     /// anchored to a line nothing in this response shows.
     /// </summary>
-    [Fact]
+    [Test]
     public void StartLineIsCheckedInSnippetModeToo()
     {
-        var exception = Assert.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
             Anchors,
             ReportPath,
             codeSnippet: "Console.WriteLine(\"extra\");",
             startLine: 19));
 
-        Assert.Contains(
-            "startLine=19 is not a line the diff of src/Report.cs shows for the file after the change",
-            exception.Message,
-            StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("startLine=19 is not a line the diff of src/Report.cs shows for the file after the change"));
 
         // The range listing is what turns the refusal into a usable retry.
-        Assert.Contains("Lines available after the change (lineType=ADDED or CONTEXT): 10-18, 40-46", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Lines available before the change (lineType=REMOVED): 10-18, 40-44", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("Lines available after the change (lineType=ADDED or CONTEXT): 10-18, 40-46"));
+        Assert.That(exception.Message, Does.Contain("Lines available before the change (lineType=REMOVED): 10-18, 40-44"));
     }
 
     /// <summary>
     /// And on the old side: "return total;" is the removed line (old 17), so <c>startLine</c> is
     /// read against the file before the change, where line 9 is one line above the first hunk.
     /// </summary>
-    [Fact]
+    [Test]
     public void SnippetStartLineIsCheckedOnTheSideTheSnippetResolvedTo()
     {
-        var exception = Assert.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
             Anchors,
             ReportPath,
             codeSnippet: "return total;",
             startLine: 9));
 
-        Assert.Contains(
-            "startLine=9 is not a line the diff of src/Report.cs shows for the file before the change",
-            exception.Message,
-            StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("startLine=9 is not a line the diff of src/Report.cs shows for the file before the change"));
     }
 
-    [Fact]
+    [Test]
     public void SnippetSpanningBothSidesIsRejected()
     {
         // Fixture lines 9-10: one removed line immediately followed by its replacement. The run
         // matches, but it cannot be one anchor.
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(
                 Anchors,
                 ReportPath,
                 codeSnippet: "foreach (var item in items)\nforeach (var item in Items)"));
 
-        Assert.Contains("spans both removed and added lines", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("lineType=ADDED", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("lineType=REMOVED", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("spans both removed and added lines"));
+        Assert.That(exception.Message, Does.Contain("lineType=ADDED"));
+        Assert.That(exception.Message, Does.Contain("lineType=REMOVED"));
     }
 
-    [Fact]
+    [Test]
     public void NeitherSnippetNorLineIsAnError()
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath));
 
-        Assert.Contains("without knowing where", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("codeSnippet", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("without knowing where"));
+        Assert.That(exception.Message, Does.Contain("codeSnippet"));
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
+    [TestCase(0)]
+    [TestCase(-1)]
     public void LineMustBePositive(int line)
     {
-        var exception = Assert.Throws<InlineAnchorException>(
-            () => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: line));
+        var exception = Expect.Throws<InlineAnchorException>(() => InlineAnchorResolver.Resolve(Anchors, ReportPath, line: line));
 
-        Assert.Contains("line must be 1 or greater", exception.Message, StringComparison.Ordinal);
+        Assert.That(exception.Message, Does.Contain("line must be 1 or greater"));
     }
 
-    [Fact]
+    [Test]
     public void NullFileListIsRejected() =>
         Assert.Throws<ArgumentNullException>(() => InlineAnchorResolver.Resolve(null!, ReportPath, codeSnippet: "x"));
 

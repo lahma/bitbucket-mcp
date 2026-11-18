@@ -1,6 +1,5 @@
 using System.Text;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Tools;
 
@@ -58,14 +57,14 @@ public class NoStdoutWritesTest
         "Console.SetError",
     ];
 
-    [Fact]
+    [Test]
     public void OnlyTheCliWritesToTheConsole()
     {
         var root = FindRepositoryRoot();
         var sourceFiles = EnumerateProductionSources(root).ToList();
 
         // Self-check: a broken root lookup must fail loudly rather than scan nothing.
-        Assert.True(sourceFiles.Count > 30, $"Expected to scan the whole server; found {sourceFiles.Count} files.");
+        Assert.That(sourceFiles.Count > 30, Is.True, $"Expected to scan the whole server; found {sourceFiles.Count} files.");
 
         var offenders = new List<string>();
         var cliUsages = 0;
@@ -88,14 +87,12 @@ public class NoStdoutWritesTest
             offenders.Add(relativePath);
         }
 
-        Assert.True(
-            offenders.Count == 0,
-            "stdout is the MCP protocol channel; only " + AllowedDirectory + " may use the console. Offending files: "
+        Assert.That(offenders.Count == 0, Is.True, "stdout is the MCP protocol channel; only " + AllowedDirectory + " may use the console. Offending files: "
             + string.Join(", ", offenders));
 
         // Self-check: the CLI does write to the console, so a detector that matches nothing is
         // broken rather than reassuring.
-        Assert.True(cliUsages > 0, "The scan found no console usage even in " + AllowedDirectory + ".");
+        Assert.That(cliUsages > 0, Is.True, "The scan found no console usage even in " + AllowedDirectory + ".");
     }
 
     private static DirectoryInfo FindRepositoryRoot()

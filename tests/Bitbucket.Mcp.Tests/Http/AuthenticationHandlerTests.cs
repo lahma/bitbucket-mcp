@@ -5,7 +5,6 @@ using Bitbucket.Mcp.Http;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -33,17 +32,16 @@ public class AuthenticationHandlerTests
     private const string ForeignTarget = "https://example.com/diffs/abc123";
 
     /// <summary>Every status this handler treats as a redirect.</summary>
-    public static TheoryData<int> RedirectStatuses => new()
-    {
+    public static int[] RedirectStatuses =>
+    [
         301,
         302,
         303,
         307,
         308,
-    };
+    ];
 
-    [Theory]
-    [MemberData(nameof(RedirectStatuses))]
+    [TestCaseSource(nameof(RedirectStatuses))]
     public async Task FollowsARedirectToTheApiHostWithTheSameCredential(int status)
     {
         var (client, stub, credentials) = CreateClient();
@@ -55,22 +53,22 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(2, stub.Requests.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(2));
 
             // THE regression test: the redirected request is what actually returns the diff, and
             // Bitbucket answers it with a 404 unless it carries the credential.
-            Assert.Equal(ApiTarget, stub.Requests[1].Uri?.AbsoluteUri);
-            Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
+            Assert.That(stub.Requests[1].Uri?.AbsoluteUri, Is.EqualTo(ApiTarget));
+            Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer token-1"));
 
             // Same credential, not a fresh one: a hop is not a reason to touch the token store.
-            Assert.Equal("Bearer token-1", stub.Requests[0].Headers["Authorization"]);
-            Assert.Equal(1, credentials.HeaderRequestCount);
-            Assert.Equal(0, credentials.InvalidateCount);
+            Assert.That(stub.Requests[0].Headers["Authorization"], Is.EqualTo("Bearer token-1"));
+            Assert.That(credentials.HeaderRequestCount, Is.EqualTo(1));
+            Assert.That(credentials.InvalidateCount, Is.EqualTo(0));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task FollowsARedirectToAnotherHostWithoutTheCredential()
     {
         var (client, stub, _) = CreateClient();
@@ -82,20 +80,19 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(2, stub.Requests.Count);
-            Assert.Equal(ForeignTarget, stub.Requests[1].Uri?.AbsoluteUri);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(2));
+            Assert.That(stub.Requests[1].Uri?.AbsoluteUri, Is.EqualTo(ForeignTarget));
 
             // The target of a redirect is the server's choice; handing a live Bitbucket credential
             // to whatever host it names is the one mistake this must not make.
-            Assert.False(stub.Requests[1].Headers.ContainsKey("Authorization"));
+            Assert.That(stub.Requests[1].Headers.ContainsKey("Authorization"), Is.False);
         }
     }
 
-    [Theory]
-    [InlineData("http://api.bitbucket.org/2.0/diff-content/abc123")]
-    [InlineData("https://api.bitbucket.org.evil.example/2.0/diff-content/abc123")]
-    [InlineData("https://evil.example/api.bitbucket.org/diff")]
+    [TestCase("http://api.bitbucket.org/2.0/diff-content/abc123")]
+    [TestCase("https://api.bitbucket.org.evil.example/2.0/diff-content/abc123")]
+    [TestCase("https://evil.example/api.bitbucket.org/diff")]
     public async Task OnlyHttpsOnTheApiHostCountsAsBitbucket(string target)
     {
         var (client, stub, _) = CreateClient();
@@ -107,12 +104,12 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.False(stub.Requests[1].Headers.ContainsKey("Authorization"));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests[1].Headers.ContainsKey("Authorization"), Is.False);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task ResolvesARelativeLocationAgainstTheRequestUri()
     {
         var (client, stub, _) = CreateClient();
@@ -126,16 +123,16 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
             // Relative is the form Bitbucket actually sends; resolved, it is still the API host, so
             // the credential goes with it.
-            Assert.Equal(ApiTarget, stub.Requests[1].Uri?.AbsoluteUri);
-            Assert.Equal("Bearer token-1", stub.Requests[1].Headers["Authorization"]);
+            Assert.That(stub.Requests[1].Uri?.AbsoluteUri, Is.EqualTo(ApiTarget));
+            Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer token-1"));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task CarriesTheRequestHeadersAcrossTheHop()
     {
         var (client, stub, _) = CreateClient();
@@ -148,18 +145,18 @@ public class AuthenticationHandlerTests
             using var request = new HttpRequestMessage(HttpMethod.Get, ApiUri);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
 
-            using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+            using var response = await client.SendAsync(request, TestContext.CurrentContext.CancellationToken);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
             // HttpClient merges its default headers in once, before the chain runs; a request the
             // chain issues itself gets nothing for free, so the diff endpoint would silently ask
             // for JSON on the hop that actually returns the diff.
-            Assert.Equal("text/plain", stub.Requests[1].Headers["Accept"]);
+            Assert.That(stub.Requests[1].Headers["Accept"], Is.EqualTo("text/plain"));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task StopsAfterFiveHopsAndSaysWhereItWasSent()
     {
         var (client, stub, _) = CreateClient();
@@ -169,18 +166,18 @@ public class AuthenticationHandlerTests
             // A redirect pointing at itself: the shape a misconfigured proxy actually produces.
             stub.Fallback = _ => StubHttpMessageHandler.CreateRedirect(HttpStatusCode.Found, ApiTarget);
 
-            var exception = await Assert.ThrowsAsync<BitbucketApiException>(() => SendAsync(client));
+            var exception = await Expect.ThrowsAsync<BitbucketApiException>(() => SendAsync(client));
 
-            Assert.Equal(HttpStatusCode.Found, exception.StatusCode);
-            Assert.Contains("Too many redirects", exception.Message, StringComparison.Ordinal);
-            Assert.Contains(ApiTarget, exception.Message, StringComparison.Ordinal);
+            Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.Found));
+            Assert.That(exception.Message, Does.Contain("Too many redirects"));
+            Assert.That(exception.Message, Does.Contain(ApiTarget));
 
             // The original request plus exactly MaxRedirects hops, and then it gives up.
-            Assert.Equal(AuthenticationHandler.MaxRedirects + 1, stub.Requests.Count);
+            Assert.That(stub.Requests.Count, Is.EqualTo(AuthenticationHandler.MaxRedirects + 1));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task FollowsAChainOfExactlyFiveHops()
     {
         var (client, stub, _) = CreateClient();
@@ -197,12 +194,12 @@ public class AuthenticationHandlerTests
             using var response = await SendAsync(client);
 
             // Five is the budget, not the point at which it starts refusing.
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(AuthenticationHandler.MaxRedirects + 1, stub.Requests.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(AuthenticationHandler.MaxRedirects + 1));
         }
     }
 
-    [Fact]
+    [Test]
     public async Task NeverFollowsARedirectOnARequestWithABody()
     {
         var (client, stub, _) = CreateClient();
@@ -216,16 +213,16 @@ public class AuthenticationHandlerTests
                 Content = new ByteArrayContent("{}"u8.ToArray()),
             };
 
-            using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+            using var response = await client.SendAsync(request, TestContext.CurrentContext.CancellationToken);
 
             // Replaying a write after a redirect is how a comment gets posted twice; the 302 comes
             // back up instead and the client turns it into an error.
-            Assert.Equal(HttpStatusCode.Found, response.StatusCode);
-            Assert.Single(stub.Requests);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Found));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task ReturnsARedirectThatNamesNoLocation()
     {
         var (client, stub, _) = CreateClient();
@@ -237,12 +234,12 @@ public class AuthenticationHandlerTests
             using var response = await SendAsync(client);
 
             // Nothing to follow and nothing to guess at: the status travels up as it is.
-            Assert.Equal(HttpStatusCode.Found, response.StatusCode);
-            Assert.Single(stub.Requests);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Found));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
         }
     }
 
-    [Fact]
+    [Test]
     public async Task DoesNotTreatANonRedirectStatusAsOne()
     {
         var (client, stub, _) = CreateClient();
@@ -254,8 +251,8 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.NotModified, response.StatusCode);
-            Assert.Single(stub.Requests);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotModified));
+            Assert.That(stub.Requests, Has.Exactly(1).Items);
         }
     }
 
@@ -263,7 +260,7 @@ public class AuthenticationHandlerTests
     /// The 401 path runs first and the redirect chain starts from whatever it left behind, so a
     /// credential refreshed on a 401 is the one that reaches the redirect target.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task ARefreshedCredentialIsTheOneThatFollowsTheRedirect()
     {
         var (client, stub, credentials) = CreateClient("stale-token", "fresh-token");
@@ -276,15 +273,15 @@ public class AuthenticationHandlerTests
 
             using var response = await SendAsync(client);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(3, stub.Requests.Count);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stub.Requests.Count, Is.EqualTo(3));
 
-            Assert.Equal("Bearer stale-token", stub.Requests[0].Headers["Authorization"]);
-            Assert.Equal("Bearer fresh-token", stub.Requests[1].Headers["Authorization"]);
-            Assert.Equal("Bearer fresh-token", stub.Requests[2].Headers["Authorization"]);
+            Assert.That(stub.Requests[0].Headers["Authorization"], Is.EqualTo("Bearer stale-token"));
+            Assert.That(stub.Requests[1].Headers["Authorization"], Is.EqualTo("Bearer fresh-token"));
+            Assert.That(stub.Requests[2].Headers["Authorization"], Is.EqualTo("Bearer fresh-token"));
 
-            Assert.Equal(1, credentials.InvalidateCount);
-            Assert.Equal(2, credentials.HeaderRequestCount);
+            Assert.That(credentials.InvalidateCount, Is.EqualTo(1));
+            Assert.That(credentials.HeaderRequestCount, Is.EqualTo(2));
         }
     }
 
@@ -292,7 +289,7 @@ public class AuthenticationHandlerTests
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ApiUri);
 
-        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+        return await client.SendAsync(request, TestContext.CurrentContext.CancellationToken);
     }
 
     private static (HttpClient Client, StubHttpMessageHandler Stub, StubCredentialProvider Credentials) CreateClient(

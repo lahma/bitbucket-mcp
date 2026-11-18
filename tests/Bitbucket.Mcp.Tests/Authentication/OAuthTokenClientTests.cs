@@ -3,7 +3,6 @@ using System.Text;
 
 using Bitbucket.Mcp.Authentication;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Authentication;
 
@@ -18,7 +17,7 @@ public sealed class OAuthTokenClientTests
     private static readonly string ExpectedBasicCredentials = Convert.ToBase64String(
         Encoding.UTF8.GetBytes($"{AuthTestSupport.ConsumerKey}:{AuthTestSupport.ConsumerSecret}"));
 
-    [Fact]
+    [Test]
     public async Task ExchangeSendsTheAuthorizationCodeGrantAsAnAuthenticatedForm()
     {
         var handler = new StubHttpMessageHandler();
@@ -31,29 +30,29 @@ public sealed class OAuthTokenClientTests
         var result = await client.ExchangeAuthorizationCodeAsync(
             "code from the callback",
             RedirectUri,
-            TestContext.Current.CancellationToken);
+            TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(result.IsSuccess);
+        Assert.That(result.IsSuccess, Is.True);
 
-        var request = Assert.Single(handler.Requests);
+        var request = Expect.Single(handler.Requests);
 
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal(AuthTestSupport.TokenEndpoint, request.Uri);
-        Assert.Equal($"Basic {ExpectedBasicCredentials}", request.Headers["Authorization"]);
-        Assert.Equal("application/x-www-form-urlencoded", request.Headers["Content-Type"]);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
+        Assert.That(request.Uri, Is.EqualTo(AuthTestSupport.TokenEndpoint));
+        Assert.That(request.Headers["Authorization"], Is.EqualTo($"Basic {ExpectedBasicCredentials}"));
+        Assert.That(request.Headers["Content-Type"], Is.EqualTo("application/x-www-form-urlencoded"));
 
         var form = AuthTestSupport.ParseForm(request.Body);
 
-        Assert.Equal("authorization_code", form["grant_type"]);
-        Assert.Equal("code from the callback", form["code"]);
+        Assert.That(form["grant_type"], Is.EqualTo("authorization_code"));
+        Assert.That(form["code"], Is.EqualTo("code from the callback"));
 
         // Verbatim: the authorization server compares the two redirect URIs as strings and rejects
         // a difference as small as a trailing slash.
-        Assert.Equal(RedirectUri, form["redirect_uri"]);
-        Assert.DoesNotContain("refresh_token", form.Keys, StringComparer.Ordinal);
+        Assert.That(form["redirect_uri"], Is.EqualTo(RedirectUri));
+        Assert.That(form.Keys, Does.Not.Contain("refresh_token"));
     }
 
-    [Fact]
+    [Test]
     public async Task RefreshSendsTheRefreshTokenGrantAsAnAuthenticatedForm()
     {
         var handler = new StubHttpMessageHandler();
@@ -61,22 +60,22 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh+token/with=specials", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh+token/with=specials", TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(result.IsSuccess);
+        Assert.That(result.IsSuccess, Is.True);
 
-        var request = Assert.Single(handler.Requests);
+        var request = Expect.Single(handler.Requests);
 
-        Assert.Equal($"Basic {ExpectedBasicCredentials}", request.Headers["Authorization"]);
+        Assert.That(request.Headers["Authorization"], Is.EqualTo($"Basic {ExpectedBasicCredentials}"));
 
         var form = AuthTestSupport.ParseForm(request.Body);
 
-        Assert.Equal("refresh_token", form["grant_type"]);
-        Assert.Equal("refresh+token/with=specials", form["refresh_token"]);
-        Assert.DoesNotContain("code", form.Keys, StringComparer.Ordinal);
+        Assert.That(form["grant_type"], Is.EqualTo("refresh_token"));
+        Assert.That(form["refresh_token"], Is.EqualTo("refresh+token/with=specials"));
+        Assert.That(form.Keys, Does.Not.Contain("code"));
     }
 
-    [Fact]
+    [Test]
     public async Task SuccessfulResponseCarriesTheTokensAndTheirLifetime()
     {
         var handler = new StubHttpMessageHandler();
@@ -89,19 +88,19 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-2", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-2", TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(result.IsSuccess);
-        Assert.NotNull(result.Token);
-        Assert.Equal("access-3", result.Token.AccessToken);
-        Assert.Equal("refresh-3", result.Token.RefreshToken);
-        Assert.Equal(7200, result.Token.ExpiresIn);
-        Assert.Equal("pullrequest:write repository", result.Token.GrantedScopes);
-        Assert.Equal("no failure", result.DescribeFailure());
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Token, Is.Not.Null);
+        Assert.That(result.Token.AccessToken, Is.EqualTo("access-3"));
+        Assert.That(result.Token.RefreshToken, Is.EqualTo("refresh-3"));
+        Assert.That(result.Token.ExpiresIn, Is.EqualTo(7200));
+        Assert.That(result.Token.GrantedScopes, Is.EqualTo("pullrequest:write repository"));
+        Assert.That(result.DescribeFailure(), Is.EqualTo("no failure"));
     }
 
     /// <summary>Bitbucket has used both spellings; the client must read whichever arrived.</summary>
-    [Fact]
+    [Test]
     public async Task GrantedScopesFallBackToTheRfcSpelling()
     {
         var handler = new StubHttpMessageHandler();
@@ -109,18 +108,17 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-3", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-3", TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(result.IsSuccess);
-        Assert.Equal("pullrequest", result.Token!.GrantedScopes);
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Token!.GrantedScopes, Is.EqualTo("pullrequest"));
     }
 
-    [Theory]
-    [InlineData("invalid_grant", true)]
-    [InlineData("invalid_client", false)]
-    [InlineData("unauthorized_client", false)]
-    [InlineData("invalid_request", false)]
-    [InlineData("invalid_grant_type", false)]
+    [TestCase("invalid_grant", true)]
+    [TestCase("invalid_client", false)]
+    [TestCase("unauthorized_client", false)]
+    [TestCase("invalid_request", false)]
+    [TestCase("invalid_grant_type", false)]
     public async Task ErrorCodesAreClassifiedByWhetherTheGrantItselfIsGone(string error, bool expectedInvalidGrant)
     {
         var handler = new StubHttpMessageHandler();
@@ -131,19 +129,19 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-4", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-4", TestContext.CurrentContext.CancellationToken);
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(expectedInvalidGrant, result.IsInvalidGrant);
-        Assert.Equal(error, result.Error);
-        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
-        Assert.Equal($"HTTP 400 {error} (the server explains itself)", result.DescribeFailure());
+        Assert.That(result.IsSuccess, Is.False);
+        Assert.That(result.IsInvalidGrant, Is.EqualTo(expectedInvalidGrant));
+        Assert.That(result.Error, Is.EqualTo(error));
+        Assert.That(result.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(result.DescribeFailure(), Is.EqualTo($"HTTP 400 {error} (the server explains itself)"));
 
         // A 400 is a deterministic answer: reissuing it would only spend rate-limit budget.
-        Assert.Single(handler.Requests);
+        Assert.That(handler.Requests, Has.Exactly(1).Items);
     }
 
-    [Fact]
+    [Test]
     public async Task ErrorWithoutADescriptionStillDescribesItself()
     {
         var handler = new StubHttpMessageHandler();
@@ -151,10 +149,10 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-5", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-5", TestContext.CurrentContext.CancellationToken);
 
-        Assert.True(result.IsInvalidGrant);
-        Assert.Equal("HTTP 400 invalid_grant", result.DescribeFailure());
+        Assert.That(result.IsInvalidGrant, Is.True);
+        Assert.That(result.DescribeFailure(), Is.EqualTo("HTTP 400 invalid_grant"));
     }
 
     /// <summary>
@@ -162,7 +160,7 @@ public sealed class OAuthTokenClientTests
     /// an exception path: the status code and a collapsed excerpt are all there is to report, and
     /// the caller has to be able to put that in a message.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task HtmlErrorPageIsToleratedAndCollapsedIntoOneLine()
     {
         var handler = new StubHttpMessageHandler
@@ -175,24 +173,24 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-6", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-6", TestContext.CurrentContext.CancellationToken);
 
-        Assert.False(result.IsSuccess);
-        Assert.False(result.IsInvalidGrant);
-        Assert.Null(result.Error);
-        Assert.Equal(HttpStatusCode.BadGateway, result.StatusCode);
+        Assert.That(result.IsSuccess, Is.False);
+        Assert.That(result.IsInvalidGrant, Is.False);
+        Assert.That(result.Error, Is.Null);
+        Assert.That(result.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
 
         var failure = result.DescribeFailure();
 
-        Assert.StartsWith("HTTP 502 (", failure, StringComparison.Ordinal);
-        Assert.Contains("502 Bad Gateway", failure, StringComparison.Ordinal);
-        Assert.DoesNotContain("\n", failure, StringComparison.Ordinal);
+        Assert.That(failure, Does.StartWith("HTTP 502 ("));
+        Assert.That(failure, Does.Contain("502 Bad Gateway"));
+        Assert.That(failure, Does.Not.Contain("\n"));
 
         // 502 is transient, so the client retried the whole budget before giving up.
-        Assert.Equal(4, handler.Requests.Count);
+        Assert.That(handler.Requests.Count, Is.EqualTo(4));
     }
 
-    [Fact]
+    [Test]
     public async Task SuccessWithoutAnAccessTokenIsAFailure()
     {
         var handler = new StubHttpMessageHandler();
@@ -200,14 +198,14 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-7", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-7", TestContext.CurrentContext.CancellationToken);
 
-        Assert.False(result.IsSuccess);
-        Assert.False(result.IsInvalidGrant);
-        Assert.Contains("no access token", result.DescribeFailure(), StringComparison.Ordinal);
+        Assert.That(result.IsSuccess, Is.False);
+        Assert.That(result.IsInvalidGrant, Is.False);
+        Assert.That(result.DescribeFailure(), Does.Contain("no access token"));
     }
 
-    [Fact]
+    [Test]
     public async Task SuccessWithABodyThatIsNotJsonIsAFailure()
     {
         var handler = new StubHttpMessageHandler();
@@ -215,45 +213,43 @@ public sealed class OAuthTokenClientTests
 
         using var client = CreateClient(handler);
 
-        var result = await client.RefreshAsync("refresh-8", TestContext.Current.CancellationToken);
+        var result = await client.RefreshAsync("refresh-8", TestContext.CurrentContext.CancellationToken);
 
-        Assert.False(result.IsSuccess);
-        Assert.Contains("not valid JSON", result.DescribeFailure(), StringComparison.Ordinal);
+        Assert.That(result.IsSuccess, Is.False);
+        Assert.That(result.DescribeFailure(), Does.Contain("not valid JSON"));
     }
 
-    [Fact]
+    [Test]
     public async Task WithoutConsumerCredentialsNothingIsSentAndTheReasonIsActionable()
     {
         var handler = new StubHttpMessageHandler();
 
         using var client = CreateClient(handler, consumerKey: null, consumerSecret: null);
 
-        Assert.False(client.IsConfigured);
+        Assert.That(client.IsConfigured, Is.False);
 
-        var failure = await Assert.ThrowsAsync<AuthenticationRequiredException>(
-            () => client.RefreshAsync("refresh-9", TestContext.Current.CancellationToken));
+        var failure = await Expect.ThrowsAsync<AuthenticationRequiredException>(() => client.RefreshAsync("refresh-9", TestContext.CurrentContext.CancellationToken));
 
-        Assert.Equal(AuthenticationRequiredReason.NotConfigured, failure.Reason);
-        Assert.Contains("BITBUCKET_OAUTH_KEY", failure.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.Requests);
+        Assert.That(failure.Reason, Is.EqualTo(AuthenticationRequiredReason.NotConfigured));
+        Assert.That(failure.Message, Does.Contain("BITBUCKET_OAUTH_KEY"));
+        Assert.That(handler.Requests, Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task HalfConfiguredConsumerCredentialsCountAsUnconfigured()
     {
         var handler = new StubHttpMessageHandler();
 
         using var client = CreateClient(handler, consumerSecret: null);
 
-        Assert.False(client.IsConfigured);
+        Assert.That(client.IsConfigured, Is.False);
 
-        await Assert.ThrowsAsync<AuthenticationRequiredException>(
-            () => client.ExchangeAuthorizationCodeAsync(
+        await Assert.ThrowsAsync<AuthenticationRequiredException>(() => client.ExchangeAuthorizationCodeAsync(
                 "code",
                 "http://127.0.0.1:33418/callback",
-                TestContext.Current.CancellationToken));
+                TestContext.CurrentContext.CancellationToken));
 
-        Assert.Empty(handler.Requests);
+        Assert.That(handler.Requests, Is.Empty);
     }
 
     private static OAuthTokenClient CreateClient(

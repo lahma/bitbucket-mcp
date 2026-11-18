@@ -4,17 +4,28 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- D11: NUnit's own Microsoft.Testing.Platform runner; global.json selects MTP for dotnet test. -->
+    <EnableNUnitRunner>true</EnableNUnitRunner>
     <!-- D7: the same reflection-free serializer contract as the server, so a missing
          [JsonSerializable] fails in `dotnet test` and not only after an AOT publish. -->
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <!-- The globalization mode the server ships with. It also makes NUnit's string constraints,
+         which compare with the current culture by default, ordinal - which is what every one of
+         them asserts. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Required for IDE0005 under EnforceCodeStyleInBuild; see the server csproj. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="xunit.v3" />
-    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit3TestAdapter" />
+    <PackageReference Include="NUnit.Analyzers" />
+    <PackageReference Include="GitHubActionsTestLogger" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="NUnit.Framework" />
   </ItemGroup>
 
   <ItemGroup>

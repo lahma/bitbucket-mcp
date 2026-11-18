@@ -3,7 +3,6 @@ using System.Text;
 
 using Bitbucket.Mcp.Authentication;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Http;
 
@@ -250,7 +249,7 @@ internal static class RequestUrl
         {
             if (string.Equals(parameter.Key, name, StringComparison.Ordinal))
             {
-                Assert.Null(found);
+                Assert.That(found, Is.Null);
                 found = parameter.Value;
             }
         }

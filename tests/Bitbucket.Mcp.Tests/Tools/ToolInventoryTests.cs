@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Reflection;
 
 using Bitbucket.Mcp.Configuration;
@@ -6,7 +5,8 @@ using Bitbucket.Mcp.Http;
 
 using ModelContextProtocol.Server;
 
-using Xunit;
+// NUnit has a DescriptionAttribute of its own; the one tools carry is the ComponentModel one.
+using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 
 namespace Bitbucket.Mcp.Tests.Tools;
 
@@ -71,50 +71,49 @@ public class ToolInventoryTests
         typeof(CancellationToken),
     ];
 
-    [Fact]
+    [Test]
     public void ExactlyTwentyToolsAreDeclaredAcrossTheThreeToolClasses()
     {
-        Assert.Equal(3, ToolTestHost.ToolTypes.Count);
-        Assert.Equal(ExpectedToolNames.Length, ToolTestHost.ToolMethods.Count);
-        Assert.Equal(ExpectedToolNames.Length, ToolTestHost.Tools.Count);
-        Assert.Equal(20, ExpectedToolNames.Length);
+        Assert.That(ToolTestHost.ToolTypes.Count, Is.EqualTo(3));
+        Assert.That(ToolTestHost.ToolMethods.Count, Is.EqualTo(ExpectedToolNames.Length));
+        Assert.That(ToolTestHost.Tools.Count, Is.EqualTo(ExpectedToolNames.Length));
+        Assert.That(ExpectedToolNames.Length, Is.EqualTo(20));
     }
 
-    [Fact]
+    [Test]
     public void ToolNamesAreExactlyThePlannedOnes()
     {
         var actual = ToolTestHost.Tools.Select(tool => tool.ProtocolTool.Name).ToArray();
 
-        Assert.Equal(ExpectedToolNames, actual);
+        Assert.That(actual, Is.EqualTo(ExpectedToolNames));
     }
 
-    [Theory]
-    [InlineData("listPullRequests", "List pull requests")]
-    [InlineData("getPullRequest", "Get pull request")]
-    [InlineData("getPullRequestDiff", "Get pull request diff")]
-    [InlineData("getPullRequestComments", "Get pull request comments")]
-    [InlineData("listDefaultReviewers", "List default reviewers")]
-    [InlineData("listPullRequestStatuses", "List pull request statuses")]
-    [InlineData("listPullRequestTasks", "List pull request tasks")]
-    [InlineData("createPullRequest", "Create pull request")]
-    [InlineData("updatePullRequest", "Update pull request")]
-    [InlineData("addPullRequestComment", "Add pull request comment")]
-    [InlineData("resolvePullRequestComment", "Resolve pull request comment")]
-    [InlineData("addPullRequestTask", "Add pull request task")]
-    [InlineData("updatePullRequestTask", "Update pull request task")]
-    [InlineData("setPullRequestReviewStatus", "Set pull request review status")]
-    [InlineData("mergePullRequest", "Merge pull request")]
-    [InlineData("declinePullRequest", "Decline pull request")]
-    [InlineData("listPipelines", "List pipelines")]
-    [InlineData("getPipeline", "Get pipeline")]
-    [InlineData("getPipelineStepLog", "Get pipeline step log")]
-    [InlineData("listCodeInsights", "List code insights")]
+    [TestCase("listPullRequests", "List pull requests")]
+    [TestCase("getPullRequest", "Get pull request")]
+    [TestCase("getPullRequestDiff", "Get pull request diff")]
+    [TestCase("getPullRequestComments", "Get pull request comments")]
+    [TestCase("listDefaultReviewers", "List default reviewers")]
+    [TestCase("listPullRequestStatuses", "List pull request statuses")]
+    [TestCase("listPullRequestTasks", "List pull request tasks")]
+    [TestCase("createPullRequest", "Create pull request")]
+    [TestCase("updatePullRequest", "Update pull request")]
+    [TestCase("addPullRequestComment", "Add pull request comment")]
+    [TestCase("resolvePullRequestComment", "Resolve pull request comment")]
+    [TestCase("addPullRequestTask", "Add pull request task")]
+    [TestCase("updatePullRequestTask", "Update pull request task")]
+    [TestCase("setPullRequestReviewStatus", "Set pull request review status")]
+    [TestCase("mergePullRequest", "Merge pull request")]
+    [TestCase("declinePullRequest", "Decline pull request")]
+    [TestCase("listPipelines", "List pipelines")]
+    [TestCase("getPipeline", "Get pipeline")]
+    [TestCase("getPipelineStepLog", "Get pipeline step log")]
+    [TestCase("listCodeInsights", "List code insights")]
     public void TitleIsTheOneThePlanSpecifies(string name, string expectedTitle)
     {
         var tool = ToolTestHost.Find(name).ProtocolTool;
 
-        Assert.Equal(expectedTitle, tool.Title);
-        Assert.Equal(expectedTitle, tool.Annotations?.Title);
+        Assert.That(tool.Title, Is.EqualTo(expectedTitle));
+        Assert.That(tool.Annotations?.Title, Is.EqualTo(expectedTitle));
     }
 
     /// <summary>
@@ -122,27 +121,26 @@ public class ToolInventoryTests
     /// the annotation is absent, which is what the seven read-only tools want: <c>readOnlyHint</c>
     /// already says they change nothing, and a destructive hint on a read tool is noise.
     /// </summary>
-    [Theory]
-    [InlineData("listPullRequests", true, null, true, true)]
-    [InlineData("getPullRequest", true, null, true, true)]
-    [InlineData("getPullRequestDiff", true, null, true, true)]
-    [InlineData("getPullRequestComments", true, null, true, true)]
-    [InlineData("listDefaultReviewers", true, null, true, true)]
-    [InlineData("listPullRequestStatuses", true, null, true, true)]
-    [InlineData("listPullRequestTasks", true, null, true, true)]
-    [InlineData("listPipelines", true, null, true, true)]
-    [InlineData("getPipeline", true, null, true, true)]
-    [InlineData("getPipelineStepLog", true, null, true, true)]
-    [InlineData("listCodeInsights", true, null, true, true)]
-    [InlineData("createPullRequest", false, false, false, true)]
-    [InlineData("addPullRequestComment", false, false, false, true)]
-    [InlineData("addPullRequestTask", false, false, false, true)]
-    [InlineData("resolvePullRequestComment", false, false, true, true)]
-    [InlineData("updatePullRequestTask", false, false, true, true)]
-    [InlineData("setPullRequestReviewStatus", false, false, true, true)]
-    [InlineData("updatePullRequest", false, true, false, true)]
-    [InlineData("mergePullRequest", false, true, false, true)]
-    [InlineData("declinePullRequest", false, true, false, true)]
+    [TestCase("listPullRequests", true, null, true, true)]
+    [TestCase("getPullRequest", true, null, true, true)]
+    [TestCase("getPullRequestDiff", true, null, true, true)]
+    [TestCase("getPullRequestComments", true, null, true, true)]
+    [TestCase("listDefaultReviewers", true, null, true, true)]
+    [TestCase("listPullRequestStatuses", true, null, true, true)]
+    [TestCase("listPullRequestTasks", true, null, true, true)]
+    [TestCase("listPipelines", true, null, true, true)]
+    [TestCase("getPipeline", true, null, true, true)]
+    [TestCase("getPipelineStepLog", true, null, true, true)]
+    [TestCase("listCodeInsights", true, null, true, true)]
+    [TestCase("createPullRequest", false, false, false, true)]
+    [TestCase("addPullRequestComment", false, false, false, true)]
+    [TestCase("addPullRequestTask", false, false, false, true)]
+    [TestCase("resolvePullRequestComment", false, false, true, true)]
+    [TestCase("updatePullRequestTask", false, false, true, true)]
+    [TestCase("setPullRequestReviewStatus", false, false, true, true)]
+    [TestCase("updatePullRequest", false, true, false, true)]
+    [TestCase("mergePullRequest", false, true, false, true)]
+    [TestCase("declinePullRequest", false, true, false, true)]
     public void AnnotationsMatchThePlanTable(
         string name,
         bool readOnly,
@@ -152,21 +150,19 @@ public class ToolInventoryTests
     {
         var annotations = ToolTestHost.Find(name).ProtocolTool.Annotations;
 
-        Assert.NotNull(annotations);
-        Assert.Equal(readOnly, annotations.ReadOnlyHint);
-        Assert.Equal(destructive, annotations.DestructiveHint);
-        Assert.Equal(idempotent, annotations.IdempotentHint);
-        Assert.Equal(openWorld, annotations.OpenWorldHint);
+        Assert.That(annotations, Is.Not.Null);
+        Assert.That(annotations.ReadOnlyHint, Is.EqualTo(readOnly));
+        Assert.That(annotations.DestructiveHint, Is.EqualTo(destructive));
+        Assert.That(annotations.IdempotentHint, Is.EqualTo(idempotent));
+        Assert.That(annotations.OpenWorldHint, Is.EqualTo(openWorld));
     }
 
-    [Fact]
+    [Test]
     public void EveryToolAdvertisesStructuredOutput()
     {
         foreach (var tool in ToolTestHost.Tools)
         {
-            Assert.True(
-                tool.ProtocolTool.OutputSchema is not null,
-                $"{tool.ProtocolTool.Name} has no output schema; UseStructuredContent must be true.");
+            Assert.That(tool.ProtocolTool.OutputSchema is not null, Is.True, $"{tool.ProtocolTool.Name} has no output schema; UseStructuredContent must be true.");
         }
     }
 
@@ -175,52 +171,48 @@ public class ToolInventoryTests
     /// <c>WithTools&lt;T&gt;</c> (CS0718). The private constructor is what keeps it uninstantiable
     /// anyway, and the methods themselves must be static (D8) so no instance is activated per call.
     /// </summary>
-    [Fact]
+    [Test]
     public void ToolClassesAreSealedAndUninstantiable()
     {
         foreach (var type in ToolTestHost.ToolTypes)
         {
-            Assert.True(type.IsSealed, $"{type.Name} must be sealed.");
-            Assert.NotNull(type.GetCustomAttribute<McpServerToolTypeAttribute>());
+            Assert.That(type.IsSealed, Is.True, $"{type.Name} must be sealed.");
+            Assert.That(type.GetCustomAttribute<McpServerToolTypeAttribute>(), Is.Not.Null);
 
             var publicConstructors = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-            Assert.Empty(publicConstructors);
+            Assert.That(publicConstructors, Is.Empty);
         }
     }
 
-    [Fact]
+    [Test]
     public void EveryToolMethodIsPublicStaticAndReturnsATaskOfAShapedResult()
     {
         foreach (var method in ToolTestHost.ToolMethods)
         {
-            Assert.True(method.IsPublic, $"{method.Name} must be public.");
-            Assert.True(method.IsStatic, $"{method.Name} must be static (D8).");
+            Assert.That(method.IsPublic, Is.True, $"{method.Name} must be public.");
+            Assert.That(method.IsStatic, Is.True, $"{method.Name} must be static (D8).");
 
-            Assert.True(
-                method.ReturnType.IsGenericType
-                && method.ReturnType.GetGenericTypeDefinition() == typeof(Task<>),
-                $"{method.Name} must return Task<T>, not {method.ReturnType.Name}.");
+            Assert.That(method.ReturnType.IsGenericType
+                && method.ReturnType.GetGenericTypeDefinition() == typeof(Task<>), Is.True, $"{method.Name} must return Task<T>, not {method.ReturnType.Name}.");
 
             var resultType = method.ReturnType.GetGenericArguments()[0];
 
-            Assert.Equal("Bitbucket.Mcp.Tools.Models", resultType.Namespace);
+            Assert.That(resultType.Namespace, Is.EqualTo("Bitbucket.Mcp.Tools.Models"));
         }
     }
 
-    [Fact]
+    [Test]
     public void EveryToolMethodHasADescription()
     {
         foreach (var method in ToolTestHost.ToolMethods)
         {
             var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
-            Assert.False(
-                string.IsNullOrWhiteSpace(description),
-                $"{method.Name} needs a [Description]; it is what the model reads to choose the tool.");
+            Assert.That(string.IsNullOrWhiteSpace(description), Is.False, $"{method.Name} needs a [Description]; it is what the model reads to choose the tool.");
         }
     }
 
-    [Fact]
+    [Test]
     public void EveryModelSuppliedParameterHasADescription()
     {
         foreach (var method in ToolTestHost.ToolMethods)
@@ -234,9 +226,7 @@ public class ToolInventoryTests
 
                 var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
-                Assert.False(
-                    string.IsNullOrWhiteSpace(description),
-                    $"{method.Name}({parameter.Name}) needs a [Description]; it becomes the schema description.");
+                Assert.That(string.IsNullOrWhiteSpace(description), Is.False, $"{method.Name}({parameter.Name}) needs a [Description]; it becomes the schema description.");
             }
         }
     }
@@ -245,7 +235,7 @@ public class ToolInventoryTests
     /// The token is the SDK's cancellation wiring, and a defaulted trailing parameter is the only
     /// shape that keeps every other argument callable by name and position from a test.
     /// </summary>
-    [Fact]
+    [Test]
     public void CancellationTokenIsTheLastParameterOfEveryTool()
     {
         foreach (var method in ToolTestHost.ToolMethods)
@@ -253,12 +243,12 @@ public class ToolInventoryTests
             var parameters = method.GetParameters();
             var last = parameters[^1];
 
-            Assert.Equal(typeof(CancellationToken), last.ParameterType);
-            Assert.True(last.HasDefaultValue, $"{method.Name}'s cancellationToken must be optional.");
+            Assert.That(last.ParameterType, Is.EqualTo(typeof(CancellationToken)));
+            Assert.That(last.HasDefaultValue, Is.True, $"{method.Name}'s cancellationToken must be optional.");
 
-            Assert.DoesNotContain(
-                parameters[..^1],
-                parameter => parameter.ParameterType == typeof(CancellationToken));
+            Assert.That(
+                parameters[..^1].Select(parameter => parameter.ParameterType),
+                Has.None.EqualTo(typeof(CancellationToken)));
         }
     }
 
@@ -266,15 +256,15 @@ public class ToolInventoryTests
     /// Both collaborators are plain parameters the container binds (D8); every tool takes them, and
     /// takes them first, so the model-facing arguments are the tail of the signature.
     /// </summary>
-    [Fact]
+    [Test]
     public void EveryToolTakesItsCollaboratorsAsTheFirstTwoParameters()
     {
         foreach (var method in ToolTestHost.ToolMethods)
         {
             var parameters = method.GetParameters();
 
-            Assert.Equal(typeof(BitbucketApiClient), parameters[0].ParameterType);
-            Assert.Equal(typeof(BitbucketMcpOptions), parameters[1].ParameterType);
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(BitbucketApiClient)));
+            Assert.That(parameters[1].ParameterType, Is.EqualTo(typeof(BitbucketMcpOptions)));
         }
     }
 }

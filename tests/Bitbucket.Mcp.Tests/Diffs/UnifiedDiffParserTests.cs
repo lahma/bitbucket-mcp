@@ -2,7 +2,6 @@ using System.Globalization;
 
 using Bitbucket.Mcp.Diffs;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests.Diffs;
 
@@ -46,22 +45,20 @@ public sealed class UnifiedDiffParserTests
     /// <summary>Only the last two files are binary — and one of those is also an addition.</summary>
     private static readonly bool[] ExpectedBinaryFlags = [false, false, false, false, false, true, true];
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("\n\n\t\n")]
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("   ")]
+    [TestCase("\n\n\t\n")]
     public void SplitYieldsNothingForEmptyInput(string? rawDiff) =>
-        Assert.Empty(UnifiedDiffParser.Split(rawDiff));
+        Assert.That(UnifiedDiffParser.Split(rawDiff), Is.Empty);
 
-    [Fact]
+    [Test]
     public void SplitsTheMultiFileFixtureIntoItsPreambleAndSixFiles()
     {
         var files = DiffFixtures.Split(DiffFixtures.MultiFile);
 
-        Assert.Equal(7, files.Count);
-        Assert.Equal(
-            new[]
+        Assert.That(files.Count, Is.EqualTo(7));
+        Assert.That(files.Select(static file => file.Path).ToArray(), Is.EqualTo(new[]
             {
                 DiffFile.UnknownPath,
                 "src/Calculator.cs",
@@ -70,17 +67,15 @@ public sealed class UnifiedDiffParserTests
                 "src/Version.txt",
                 "assets/logo.png",
                 "assets/icon.ico",
-            },
-            files.Select(static file => file.Path).ToArray());
+            }));
     }
 
-    [Fact]
+    [Test]
     public void EveryStatusAndBinaryFlagCombinationIsReported()
     {
         var files = DiffFixtures.Split(DiffFixtures.MultiFile);
 
-        Assert.Equal(
-            new[]
+        Assert.That(files.Select(static file => file.Status).ToArray(), Is.EqualTo(new[]
             {
                 DiffFileStatus.Modified, // the preamble: nothing says otherwise, so it falls back
                 DiffFileStatus.Modified,
@@ -89,195 +84,193 @@ public sealed class UnifiedDiffParserTests
                 DiffFileStatus.Added,
                 DiffFileStatus.Binary,
                 DiffFileStatus.Added, // a binary *addition* keeps Added and sets IsBinary as well
-            },
-            files.Select(static file => file.Status).ToArray());
+            }));
 
-        Assert.Equal(ExpectedBinaryFlags, files.Select(static file => file.IsBinary).ToArray());
+        Assert.That(files.Select(static file => file.IsBinary).ToArray(), Is.EqualTo(ExpectedBinaryFlags));
     }
 
-    [Fact]
+    [Test]
     public void PreambleBecomesAnUnnamedFileWithNoBody()
     {
         var preamble = DiffFixtures.Split(DiffFixtures.MultiFile)[0];
 
-        Assert.Null(preamble.OldPath);
-        Assert.Null(preamble.NewPath);
-        Assert.Equal("(unknown)", preamble.Path);
-        Assert.Equal(6, preamble.Header.Count); // fixture lines 1-6
-        Assert.Empty(preamble.Body);
-        Assert.StartsWith("commit ", preamble.Header[0], StringComparison.Ordinal);
+        Assert.That(preamble.OldPath, Is.Null);
+        Assert.That(preamble.NewPath, Is.Null);
+        Assert.That(preamble.Path, Is.EqualTo("(unknown)"));
+        Assert.That(preamble.Header.Count, Is.EqualTo(6)); // fixture lines 1-6
+        Assert.That(preamble.Body, Is.Empty);
+        Assert.That(preamble.Header[0], Does.StartWith("commit "));
     }
 
-    [Fact]
+    [Test]
     public void HeaderEndsAtTheFirstHunkHeader()
     {
         var calculator = DiffFixtures.Split(DiffFixtures.MultiFile)[1];
 
-        Assert.Equal(ExpectedCalculatorHeader, calculator.Header.ToArray());
+        Assert.That(calculator.Header.ToArray(), Is.EqualTo(ExpectedCalculatorHeader));
 
-        Assert.Equal(17, calculator.Body.Count); // fixture lines 11-27
-        Assert.Equal("@@ -10,5 +10,8 @@ public static class Calculator", calculator.Body[0]);
+        Assert.That(calculator.Body.Count, Is.EqualTo(17)); // fixture lines 11-27
+        Assert.That(calculator.Body[0], Is.EqualTo("@@ -10,5 +10,8 @@ public static class Calculator"));
 
         // Hunk 1 is the header plus 9 content lines, so hunk 2's header is body index 10.
-        Assert.Equal("@@ -30,5 +33,5 @@ public static class Calculator", calculator.Body[10]);
-        Assert.Equal("src/Calculator.cs", calculator.OldPath);
-        Assert.Equal("src/Calculator.cs", calculator.NewPath);
+        Assert.That(calculator.Body[10], Is.EqualTo("@@ -30,5 +33,5 @@ public static class Calculator"));
+        Assert.That(calculator.OldPath, Is.EqualTo("src/Calculator.cs"));
+        Assert.That(calculator.NewPath, Is.EqualTo("src/Calculator.cs"));
     }
 
-    [Fact]
+    [Test]
     public void RenameKeepsBothPathsEvenWithSpacesInThem()
     {
         var renamed = DiffFixtures.Split(DiffFixtures.MultiFile)[2];
 
-        Assert.Equal("docs/old notes.md", renamed.OldPath);
-        Assert.Equal("docs/new notes.md", renamed.NewPath);
-        Assert.Equal("docs/new notes.md", renamed.Path);
-        Assert.Equal(7, renamed.Header.Count); // fixture lines 28-34
-        Assert.Equal(5, renamed.Body.Count); // fixture lines 35-39
+        Assert.That(renamed.OldPath, Is.EqualTo("docs/old notes.md"));
+        Assert.That(renamed.NewPath, Is.EqualTo("docs/new notes.md"));
+        Assert.That(renamed.Path, Is.EqualTo("docs/new notes.md"));
+        Assert.That(renamed.Header.Count, Is.EqualTo(7)); // fixture lines 28-34
+        Assert.That(renamed.Body.Count, Is.EqualTo(5)); // fixture lines 35-39
     }
 
-    [Fact]
+    [Test]
     public void DeletedFileHasNoNewPath()
     {
         var deleted = DiffFixtures.Split(DiffFixtures.MultiFile)[3];
 
-        Assert.Equal("scripts/legacy.sh", deleted.OldPath);
-        Assert.Null(deleted.NewPath);
-        Assert.Equal("scripts/legacy.sh", deleted.Path);
-        Assert.Equal("+++ /dev/null", deleted.Header[^1]);
-        Assert.Equal(4, deleted.Body.Count); // fixture lines 45-48
+        Assert.That(deleted.OldPath, Is.EqualTo("scripts/legacy.sh"));
+        Assert.That(deleted.NewPath, Is.Null);
+        Assert.That(deleted.Path, Is.EqualTo("scripts/legacy.sh"));
+        Assert.That(deleted.Header[^1], Is.EqualTo("+++ /dev/null"));
+        Assert.That(deleted.Body.Count, Is.EqualTo(4)); // fixture lines 45-48
     }
 
-    [Fact]
+    [Test]
     public void AddedFileHasNoOldPathAndKeepsTheNoNewlineMarkerInItsBody()
     {
         var added = DiffFixtures.Split(DiffFixtures.MultiFile)[4];
 
-        Assert.Null(added.OldPath);
-        Assert.Equal("src/Version.txt", added.NewPath);
-        Assert.Equal("--- /dev/null", added.Header[^2]);
+        Assert.That(added.OldPath, Is.Null);
+        Assert.That(added.NewPath, Is.EqualTo("src/Version.txt"));
+        Assert.That(added.Header[^2], Is.EqualTo("--- /dev/null"));
 
         // Body = @@ header + two "+" lines + the "\ No newline" note (fixture lines 54-57).
-        Assert.Equal(4, added.Body.Count);
-        Assert.Equal("\\ No newline at end of file", added.Body[^1]);
+        Assert.That(added.Body.Count, Is.EqualTo(4));
+        Assert.That(added.Body[^1], Is.EqualTo("\\ No newline at end of file"));
     }
 
-    [Fact]
+    [Test]
     public void BinaryNoticeIsBodySoTheTruncatorCanCapIt()
     {
         var files = DiffFixtures.Split(DiffFixtures.MultiFile);
         var modifiedBinary = files[5];
         var addedBinary = files[6];
 
-        Assert.Equal(2, modifiedBinary.Header.Count);
-        Assert.Equal("Binary files a/assets/logo.png and b/assets/logo.png differ", Assert.Single(modifiedBinary.Body));
+        Assert.That(modifiedBinary.Header.Count, Is.EqualTo(2));
+        Assert.That(Expect.Single(modifiedBinary.Body), Is.EqualTo("Binary files a/assets/logo.png and b/assets/logo.png differ"));
 
-        Assert.Equal(3, addedBinary.Header.Count);
-        Assert.Equal("Binary files /dev/null and b/assets/icon.ico differ", Assert.Single(addedBinary.Body));
-        Assert.Null(addedBinary.OldPath);
-        Assert.Equal("assets/icon.ico", addedBinary.NewPath);
+        Assert.That(addedBinary.Header.Count, Is.EqualTo(3));
+        Assert.That(Expect.Single(addedBinary.Body), Is.EqualTo("Binary files /dev/null and b/assets/icon.ico differ"));
+        Assert.That(addedBinary.OldPath, Is.Null);
+        Assert.That(addedBinary.NewPath, Is.EqualTo("assets/icon.ico"));
     }
 
-    [Fact]
+    [Test]
     public void GitBinaryPatchLandsInTheBodyWholeSoItCanBeTruncated()
     {
-        var file = Assert.Single(DiffFixtures.Split(DiffFixtures.BinaryPatch));
+        var file = Expect.Single(DiffFixtures.Split(DiffFixtures.BinaryPatch));
 
-        Assert.Equal(DiffFileStatus.Binary, file.Status);
-        Assert.True(file.IsBinary);
-        Assert.Equal("assets/sprite.bin", file.Path);
-        Assert.Equal(2, file.Header.Count);
+        Assert.That(file.Status, Is.EqualTo(DiffFileStatus.Binary));
+        Assert.That(file.IsBinary, Is.True);
+        Assert.That(file.Path, Is.EqualTo("assets/sprite.bin"));
+        Assert.That(file.Header.Count, Is.EqualTo(2));
 
         // 305 body lines: "GIT binary patch", "literal 12288", 300 payload lines, a blank line,
         // "literal 0" and "HcmV?d00001" (fixture lines 3-307).
-        Assert.Equal(305, file.Body.Count);
-        Assert.Equal("GIT binary patch", file.Body[0]);
+        Assert.That(file.Body.Count, Is.EqualTo(305));
+        Assert.That(file.Body[0], Is.EqualTo("GIT binary patch"));
     }
 
-    [Fact]
+    [Test]
     public void OctalEscapedPathsDecodeToUtf8()
     {
-        var file = Assert.Single(DiffFixtures.Split(DiffFixtures.OctalPath));
+        var file = Expect.Single(DiffFixtures.Split(DiffFixtures.OctalPath));
 
         // "a/src/caf\303\251.cs" -> 0xC3 0xA9 is U+00E9, so src/café.cs.
-        Assert.Equal("src/café.cs", file.OldPath);
-        Assert.Equal("src/café.cs", file.NewPath);
-        Assert.Equal(DiffFileStatus.Modified, file.Status);
-        Assert.Equal(4, file.Header.Count);
-        Assert.Equal(5, file.Body.Count);
+        Assert.That(file.OldPath, Is.EqualTo("src/café.cs"));
+        Assert.That(file.NewPath, Is.EqualTo("src/café.cs"));
+        Assert.That(file.Status, Is.EqualTo(DiffFileStatus.Modified));
+        Assert.That(file.Header.Count, Is.EqualTo(4));
+        Assert.That(file.Body.Count, Is.EqualTo(5));
     }
 
-    [Fact]
+    [Test]
     public void NoPrefixOutputKeepsItsPaths()
     {
-        var file = Assert.Single(DiffFixtures.Split(DiffFixtures.NoPrefix));
+        var file = Expect.Single(DiffFixtures.Split(DiffFixtures.NoPrefix));
 
-        Assert.Equal("src/NoPrefix.cs", file.OldPath);
-        Assert.Equal("src/NoPrefix.cs", file.NewPath);
-        Assert.Equal("@@ -5,3 +5,3 @@", file.Body[0]);
+        Assert.That(file.OldPath, Is.EqualTo("src/NoPrefix.cs"));
+        Assert.That(file.NewPath, Is.EqualTo("src/NoPrefix.cs"));
+        Assert.That(file.Body[0], Is.EqualTo("@@ -5,3 +5,3 @@"));
     }
 
-    [Fact]
+    [Test]
     public void HeaderlessDiffStillYieldsAFileWithItsPaths()
     {
-        var file = Assert.Single(DiffFixtures.Split(DiffFixtures.Headerless));
+        var file = Expect.Single(DiffFixtures.Split(DiffFixtures.Headerless));
 
-        Assert.Equal("src/Headerless.cs", file.OldPath);
-        Assert.Equal("src/Headerless.cs", file.NewPath);
-        Assert.Equal(2, file.Header.Count); // only --- and +++
-        Assert.Equal(5, file.Body.Count);
+        Assert.That(file.OldPath, Is.EqualTo("src/Headerless.cs"));
+        Assert.That(file.NewPath, Is.EqualTo("src/Headerless.cs"));
+        Assert.That(file.Header.Count, Is.EqualTo(2)); // only --- and +++
+        Assert.That(file.Body.Count, Is.EqualTo(5));
     }
 
-    [Fact]
+    [Test]
     public void ContentWithNoFileHeadersAtAllStillSurvivesAsAnUnnamedFile()
     {
-        var file = Assert.Single(UnifiedDiffParser.Split("@@ -1,2 +1,2 @@\n-alpha\n+beta\n"));
+        var file = Expect.Single(UnifiedDiffParser.Split("@@ -1,2 +1,2 @@\n-alpha\n+beta\n"));
 
-        Assert.Null(file.OldPath);
-        Assert.Null(file.NewPath);
-        Assert.Equal(DiffFile.UnknownPath, file.Path);
-        Assert.Empty(file.Header);
-        Assert.Equal(3, file.Body.Count);
+        Assert.That(file.OldPath, Is.Null);
+        Assert.That(file.NewPath, Is.Null);
+        Assert.That(file.Path, Is.EqualTo(DiffFile.UnknownPath));
+        Assert.That(file.Header, Is.Empty);
+        Assert.That(file.Body.Count, Is.EqualTo(3));
     }
 
-    [Fact]
+    [Test]
     public void LargeFixtureParsesAsOneAddedFile()
     {
-        var file = Assert.Single(DiffFixtures.Split(DiffFixtures.LargeFile));
+        var file = Expect.Single(DiffFixtures.Split(DiffFixtures.LargeFile));
 
-        Assert.Equal(DiffFileStatus.Added, file.Status);
-        Assert.False(file.IsBinary);
-        Assert.Equal("src/Generated/BigTable.cs", file.Path);
-        Assert.Equal(5, file.Header.Count);
+        Assert.That(file.Status, Is.EqualTo(DiffFileStatus.Added));
+        Assert.That(file.IsBinary, Is.False);
+        Assert.That(file.Path, Is.EqualTo("src/Generated/BigTable.cs"));
+        Assert.That(file.Header.Count, Is.EqualTo(5));
 
         // One "@@ -0,0 +1,4200 @@" header plus 4200 "+" lines.
-        Assert.Equal(4201, file.Body.Count);
+        Assert.That(file.Body.Count, Is.EqualTo(4201));
     }
 
-    [Theory]
-    [InlineData(DiffFixtures.MultiFile)]
-    [InlineData(DiffFixtures.Anchors)]
-    [InlineData(DiffFixtures.OctalPath)]
-    [InlineData(DiffFixtures.NoPrefix)]
-    [InlineData(DiffFixtures.Headerless)]
-    [InlineData(DiffFixtures.BinaryPatch)]
-    [InlineData(DiffFixtures.LargeFile)]
+    [TestCase(DiffFixtures.MultiFile)]
+    [TestCase(DiffFixtures.Anchors)]
+    [TestCase(DiffFixtures.OctalPath)]
+    [TestCase(DiffFixtures.NoPrefix)]
+    [TestCase(DiffFixtures.Headerless)]
+    [TestCase(DiffFixtures.BinaryPatch)]
+    [TestCase(DiffFixtures.LargeFile)]
     public void CrlfInputProducesExactlyTheSameFilesAsLfInput(string fixture)
     {
         var lf = DiffFixtures.Read(fixture);
         var expected = UnifiedDiffParser.Split(lf);
         var actual = UnifiedDiffParser.Split(DiffFixtures.ToCrlf(lf));
 
-        Assert.Equal(expected.Count, actual.Count);
+        Assert.That(actual.Count, Is.EqualTo(expected.Count));
 
         for (var i = 0; i < expected.Count; i++)
         {
-            Assert.Equal(expected[i].OldPath, actual[i].OldPath);
-            Assert.Equal(expected[i].NewPath, actual[i].NewPath);
-            Assert.Equal(expected[i].Status, actual[i].Status);
-            Assert.Equal(expected[i].IsBinary, actual[i].IsBinary);
-            Assert.Equal(expected[i].Header, actual[i].Header);
-            Assert.Equal(expected[i].Body, actual[i].Body);
+            Assert.That(actual[i].OldPath, Is.EqualTo(expected[i].OldPath));
+            Assert.That(actual[i].NewPath, Is.EqualTo(expected[i].NewPath));
+            Assert.That(actual[i].Status, Is.EqualTo(expected[i].Status));
+            Assert.That(actual[i].IsBinary, Is.EqualTo(expected[i].IsBinary));
+            Assert.That(actual[i].Header, Is.EqualTo(expected[i].Header));
+            Assert.That(actual[i].Body, Is.EqualTo(expected[i].Body));
         }
     }
 
@@ -287,13 +280,12 @@ public sealed class UnifiedDiffParserTests
     /// line number by walking exactly these counters, so a fixture that misstated them would make
     /// the arithmetic expectations in <see cref="InlineAnchorResolverTests"/> meaningless.
     /// </summary>
-    [Theory]
-    [InlineData(DiffFixtures.MultiFile)]
-    [InlineData(DiffFixtures.Anchors)]
-    [InlineData(DiffFixtures.OctalPath)]
-    [InlineData(DiffFixtures.NoPrefix)]
-    [InlineData(DiffFixtures.Headerless)]
-    [InlineData(DiffFixtures.LargeFile)]
+    [TestCase(DiffFixtures.MultiFile)]
+    [TestCase(DiffFixtures.Anchors)]
+    [TestCase(DiffFixtures.OctalPath)]
+    [TestCase(DiffFixtures.NoPrefix)]
+    [TestCase(DiffFixtures.Headerless)]
+    [TestCase(DiffFixtures.LargeFile)]
     public void HunkHeadersAgreeWithTheLinesTheyDescribe(string fixture)
     {
         var hunks = 0;
@@ -312,8 +304,8 @@ public sealed class UnifiedDiffParserTests
                 {
                     if (inHunk)
                     {
-                        Assert.Equal(declaredOld, actualOld);
-                        Assert.Equal(declaredNew, actualNew);
+                        Assert.That(actualOld, Is.EqualTo(declaredOld));
+                        Assert.That(actualNew, Is.EqualTo(declaredNew));
                     }
 
                     (declaredOld, declaredNew) = ParseHunkCounts(line);
@@ -348,12 +340,12 @@ public sealed class UnifiedDiffParserTests
 
             if (inHunk)
             {
-                Assert.Equal(declaredOld, actualOld);
-                Assert.Equal(declaredNew, actualNew);
+                Assert.That(actualOld, Is.EqualTo(declaredOld));
+                Assert.That(actualNew, Is.EqualTo(declaredNew));
             }
         }
 
-        Assert.True(hunks > 0, "the fixture should contain at least one hunk");
+        Assert.That(hunks > 0, Is.True, "the fixture should contain at least one hunk");
     }
 
     /// <summary>Reads <c>b</c> and <c>d</c> out of <c>@@ -a,b +c,d @@</c> (both default to 1).</summary>

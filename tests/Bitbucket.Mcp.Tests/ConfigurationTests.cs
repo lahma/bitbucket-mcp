@@ -1,7 +1,6 @@
 using Bitbucket.Mcp.Authentication;
 using Bitbucket.Mcp.Configuration;
 
-using Xunit;
 
 namespace Bitbucket.Mcp.Tests;
 
@@ -25,78 +24,71 @@ public sealed class ConfigurationTests
     /// the manifest maps is covered, because the manifest maps all six and any one of them
     /// regressing is the same defect.
     /// </summary>
-    [Theory]
-    [InlineData("BITBUCKET_ACCESS_TOKEN")]
-    [InlineData("BITBUCKET_EMAIL")]
-    [InlineData("BITBUCKET_API_TOKEN")]
-    [InlineData("BITBUCKET_OAUTH_KEY")]
-    [InlineData("BITBUCKET_OAUTH_SECRET")]
-    [InlineData("BITBUCKET_DEFAULT_WORKSPACE")]
+    [TestCase("BITBUCKET_ACCESS_TOKEN")]
+    [TestCase("BITBUCKET_EMAIL")]
+    [TestCase("BITBUCKET_API_TOKEN")]
+    [TestCase("BITBUCKET_OAUTH_KEY")]
+    [TestCase("BITBUCKET_OAUTH_SECRET")]
+    [TestCase("BITBUCKET_DEFAULT_WORKSPACE")]
     public void ABlankPluginOptionDoesNotShadowTheAmbientVariable(string name)
     {
         var options = Read((name, "ambient-value"), (Prefix + name, string.Empty));
 
-        Assert.Equal("ambient-value", ValueOf(options, name));
+        Assert.That(ValueOf(options, name), Is.EqualTo("ambient-value"));
     }
 
     /// <summary>Whitespace is blank too — the launcher trims nothing on its way through.</summary>
-    [Theory]
-    [InlineData("BITBUCKET_ACCESS_TOKEN")]
-    [InlineData("BITBUCKET_API_TOKEN")]
+    [TestCase("BITBUCKET_ACCESS_TOKEN")]
+    [TestCase("BITBUCKET_API_TOKEN")]
     public void AWhitespacePluginOptionIsAlsoTreatedAsAbsent(string name)
     {
         var options = Read((name, "ambient-value"), (Prefix + name, "   "));
 
-        Assert.Equal("ambient-value", ValueOf(options, name));
+        Assert.That(ValueOf(options, name), Is.EqualTo("ambient-value"));
     }
 
     /// <summary>A prompt the user did fill in still wins — that is the whole point of the option.</summary>
-    [Theory]
-    [InlineData("BITBUCKET_ACCESS_TOKEN")]
-    [InlineData("BITBUCKET_EMAIL")]
-    [InlineData("BITBUCKET_API_TOKEN")]
-    [InlineData("BITBUCKET_OAUTH_KEY")]
-    [InlineData("BITBUCKET_OAUTH_SECRET")]
-    [InlineData("BITBUCKET_DEFAULT_WORKSPACE")]
+    [TestCase("BITBUCKET_ACCESS_TOKEN")]
+    [TestCase("BITBUCKET_EMAIL")]
+    [TestCase("BITBUCKET_API_TOKEN")]
+    [TestCase("BITBUCKET_OAUTH_KEY")]
+    [TestCase("BITBUCKET_OAUTH_SECRET")]
+    [TestCase("BITBUCKET_DEFAULT_WORKSPACE")]
     public void AFilledPluginOptionWinsOverTheAmbientVariable(string name)
     {
         var options = Read((name, "ambient-value"), (Prefix + name, "from-the-prompt"));
 
-        Assert.Equal("from-the-prompt", ValueOf(options, name));
+        Assert.That(ValueOf(options, name), Is.EqualTo("from-the-prompt"));
     }
 
-    [Fact]
+    [Test]
     public void ThePluginOptionAloneIsEnough()
     {
         var options = Read((Prefix + "BITBUCKET_ACCESS_TOKEN", "only-the-prompt"));
 
-        Assert.Equal("only-the-prompt", options.AccessToken);
-        Assert.Equal(Prefix + "BITBUCKET_ACCESS_TOKEN", options.AccessTokenVariable);
+        Assert.That(options.AccessToken, Is.EqualTo("only-the-prompt"));
+        Assert.That(options.AccessTokenVariable, Is.EqualTo(Prefix + "BITBUCKET_ACCESS_TOKEN"));
     }
 
     /// <summary>
     /// The source is reported so <c>status</c> can say which of the two won. Without it the report
     /// reads "set" either way, which is exactly what made the original clobber invisible.
     /// </summary>
-    [Fact]
+    [Test]
     public void TheSourceVariableIsReported()
     {
-        Assert.Equal(
-            "BITBUCKET_ACCESS_TOKEN",
-            Read(("BITBUCKET_ACCESS_TOKEN", "t")).AccessTokenVariable);
+        Assert.That(Read(("BITBUCKET_ACCESS_TOKEN", "t")).AccessTokenVariable, Is.EqualTo("BITBUCKET_ACCESS_TOKEN"));
 
-        Assert.Equal(
-            Prefix + "BITBUCKET_ACCESS_TOKEN",
-            Read((Prefix + "BITBUCKET_ACCESS_TOKEN", "t")).AccessTokenVariable);
+        Assert.That(Read((Prefix + "BITBUCKET_ACCESS_TOKEN", "t")).AccessTokenVariable, Is.EqualTo(Prefix + "BITBUCKET_ACCESS_TOKEN"));
 
-        Assert.Null(Read().AccessTokenVariable);
+        Assert.That(Read().AccessTokenVariable, Is.Null);
     }
 
     /// <summary>
     /// The consequence the issue is actually about: blanking the top of the precedence chain must
     /// not demote the caller to the mechanism below it.
     /// </summary>
-    [Fact]
+    [Test]
     public void ABlankPluginTokenDoesNotDemoteTheAuthMechanism()
     {
         var options = Read(
@@ -109,15 +101,15 @@ public sealed class ConfigurationTests
 
         var provider = CredentialProviderFactory.CreateStatic(options);
 
-        Assert.NotNull(provider);
-        Assert.Contains("Bearer", provider.Describe(), StringComparison.Ordinal);
+        Assert.That(provider, Is.Not.Null);
+        Assert.That(provider.Describe(), Does.Contain("Bearer"));
     }
 
     /// <summary>
     /// And the whole chain must not be emptied into a browser sign-in nobody asked for, which is
     /// what a plugin install with every prompt left blank used to do.
     /// </summary>
-    [Fact]
+    [Test]
     public void AnAllBlankPluginInstallLeavesAnAmbientCredentialIntact()
     {
         var options = Read(
@@ -132,57 +124,57 @@ public sealed class ConfigurationTests
 
         var provider = CredentialProviderFactory.CreateStatic(options);
 
-        Assert.NotNull(provider);
-        Assert.Contains("Basic", provider.Describe(), StringComparison.Ordinal);
+        Assert.That(provider, Is.Not.Null);
+        Assert.That(provider.Describe(), Does.Contain("Basic"));
     }
 
     /// <summary>The credential names the variable it came from, so the report cannot mislead.</summary>
-    [Fact]
+    [Test]
     public void TheCredentialDescriptionNamesThePluginVariableWhenThatIsWhatSuppliedIt()
     {
         var bearer = CredentialProviderFactory.CreateStatic(
             Read((Prefix + "BITBUCKET_ACCESS_TOKEN", "t")));
 
-        Assert.NotNull(bearer);
-        Assert.Contains(Prefix + "BITBUCKET_ACCESS_TOKEN", bearer.Describe(), StringComparison.Ordinal);
+        Assert.That(bearer, Is.Not.Null);
+        Assert.That(bearer.Describe(), Does.Contain(Prefix + "BITBUCKET_ACCESS_TOKEN"));
 
         var basic = CredentialProviderFactory.CreateStatic(Read(
             (Prefix + "BITBUCKET_EMAIL", "me@example.com"),
             ("BITBUCKET_API_TOKEN", "ambient")));
 
-        Assert.NotNull(basic);
+        Assert.That(basic, Is.Not.Null);
 
         // Mixed sources are the confusing case, so both are named individually.
-        Assert.Contains(Prefix + "BITBUCKET_EMAIL", basic.Describe(), StringComparison.Ordinal);
-        Assert.Contains("+ BITBUCKET_API_TOKEN", basic.Describe(), StringComparison.Ordinal);
+        Assert.That(basic.Describe(), Does.Contain(Prefix + "BITBUCKET_EMAIL"));
+        Assert.That(basic.Describe(), Does.Contain("+ BITBUCKET_API_TOKEN"));
     }
 
     /// <summary>
     /// No part of a credential ever reaches the description, whichever variable supplied it.
     /// </summary>
-    [Fact]
+    [Test]
     public void TheDescriptionNeverContainsTheCredential()
     {
         var provider = CredentialProviderFactory.CreateStatic(
             Read((Prefix + "BITBUCKET_ACCESS_TOKEN", "super-secret-value")));
 
-        Assert.NotNull(provider);
-        Assert.DoesNotContain("super-secret-value", provider.Describe(), StringComparison.Ordinal);
+        Assert.That(provider, Is.Not.Null);
+        Assert.That(provider.Describe(), Does.Not.Contain("super-secret-value"));
     }
 
     /// <summary>
     /// Variables the manifest does not declare are read from the environment alone. The prefix is
     /// the plugin launcher's half of a contract, not a general-purpose override anyone sets by hand.
     /// </summary>
-    [Fact]
+    [Test]
     public void UnmappedVariablesAreNotReadThroughThePluginLayer()
     {
         var options = Read(
             (Prefix + "BITBUCKET_MCP_MAX_LOG_LINES", "7"),
             (Prefix + "BITBUCKET_OAUTH_CALLBACK_HOST", "::1"));
 
-        Assert.Equal(BitbucketMcpOptions.DefaultMaxLogLines, options.MaxLogLines);
-        Assert.Equal(BitbucketMcpOptions.DefaultOAuthCallbackHost, options.OAuthCallbackHost);
+        Assert.That(options.MaxLogLines, Is.EqualTo(BitbucketMcpOptions.DefaultMaxLogLines));
+        Assert.That(options.OAuthCallbackHost, Is.EqualTo(BitbucketMcpOptions.DefaultOAuthCallbackHost));
     }
 
     private static BitbucketMcpOptions Read(params (string Name, string? Value)[] variables)
