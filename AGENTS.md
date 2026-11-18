@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for humans and AI agents working in this repository. `CLAUDE.md` imports this file,
+Guidance for humans and AI agents working in this repository. `.claude/CLAUDE.md` imports this file,
 so keep it the single source of truth.
 
 `bitbucket-mcp` is a Model Context Protocol server for **Bitbucket Cloud** (REST API 2.0),
@@ -197,9 +197,22 @@ The same manifest bundles the MCP server (`dnx bitbucket-mcp@{version} --yes`), 
 Validate both manifests with the official CLI, which is non-interactive:
 
 ```powershell
-claude plugin validate . --strict          # the marketplace manifest
+claude plugin validate . --strict          # the marketplace manifest; must end "Validation passed"
 claude plugin marketplace add .            # resolves it; remove afterwards
 ```
+
+`--strict` turns every plugin warning into a failure, so it must stay warning-free. Two things keep
+it that way:
+
+- **No `CLAUDE.md` at the repository root.** The root is the plugin's root, where Claude Code does
+  not load one as context, and the validator warns about it. The import that gives Claude Code
+  contributors this file lives in `.claude/CLAUDE.md` (`@../AGENTS.md`, relative to the importing
+  file), which Claude Code reads as project instructions just the same.
+- **One expected line that is not a warning: `ICON_MISSING`.** It is a *plugin directory* check,
+  and the validator says itself that those "do not change the result". No icon ships yet, on
+  purpose: the first icon a plugin is submitted to the directory with becomes its listing icon for
+  good, so it is the owner's choice. When one is chosen: a square PNG of 512–2048 px, under 2 MB, at
+  `.claude-plugin/icon.png`.
 
 It holds what neither `ServerInstructions` nor a tool `[Description]` can, because both are scoped
 to one call: the **order** the calls go in (diffstat before diff content, statuses before a merge,
@@ -302,6 +315,8 @@ transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and n
                             plugin marketplace, source "./" (PluginManifestTests)
 .claude/skills/             The shipped Agent Skill (one canonical copy; AgentSkillTests keeps its
                             tool references in step with the inventory)
+.claude/CLAUDE.md           Imports AGENTS.md for Claude Code — under .claude/, because the root is
+                            the plugin's root (see *The plugin and its marketplace*)
 .mcp/server.json            MCP server manifest (D17), packed into the NuGet package at
                             /.mcp/server.json; its version must match CHANGELOG.md (test-enforced)
 src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-mcp
