@@ -37,7 +37,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D24)
+## Design decisions (D1–D25)
 
 | # | Decision |
 |---|---|
@@ -65,6 +65,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D22 | **The plugin manifest writes to `CLAUDE_PLUGIN_OPTION_*`, never to the plain variable names.** A Claude Code manifest maps every declared option into the server's environment through a `${user_config.X}` placeholder, and an option the user never filled in substitutes as the **empty string** rather than being omitted — so mapping it onto `BITBUCKET_ACCESS_TOKEN` set that variable to `""` in the child process and shadowed a value the user already had ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). With three auth mechanisms in a precedence chain the failure was silent: it demoted the caller to the next mechanism, or off the end of the chain into a browser sign-in nobody asked for. `BitbucketMcpOptions.ReadConfigured` therefore reads the prefixed name first, blank treated as absent, falling back to the plain one; a filled prompt still wins and a blank one changes nothing. `${user_config.KEY:-fallback}` is **not** an alternative — the substituter's capture group is `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, is undefined, and throws, and the plugin fails to load. `PluginManifestTests` fails if the manifest is ever mapped back.
 | D23 | **The target framework stays `net10.0` (LTS) through .NET 11.** Measured 2026-11-18 on SDK 10.0.404 and 11.0.100: `net11.0` grows the win-x64 AOT binary 2% (all of it runtime), leaves startup unchanged, and ends support the same month (2028-11). Its one gain — the server's restore graph falling from 21 packages to 12, because .NET 11 moved `Microsoft.Extensions.*.Abstractions`, `Options` and `Primitives` into the shared framework — exists only with `net11.0` *alone*, and `net11.0` alone breaks `dnx` (and with it the Claude Code plugin) for anyone without the .NET 11 runtime; carrying `net10.0` as well keeps the old graph. It needs no `NuGet.Frameworks` pin in `build/`: that pin was load-bearing only while Fallout's `ITest` evaluated test projects in-process, and the hand-written `Test` target (D11) does not — SDK 11.0.100 with `net11.0` runs the simulated CI `Test` green without it (2026-11-18). Revisit at .NET 12 LTS, or when RID-specific AOT tool packages decouple `dnx` from the installed runtime. |
 | D24 | **An argument the schema does not name is refused, not dropped.** The SDK binds arguments by exact name and ignores the rest, so a mis-cased required argument failed with a bare "An error occurred invoking", and a mis-cased optional one vanished — `Workspace` for `workspace` silently ran the call against `BITBUCKET_DEFAULT_WORKSPACE`, which for a write tool is a change in the wrong place. A call-tool filter registered by `McpServerSetup.WithBitbucketTools` checks the names in `arguments` against the tool's input schema before the tool runs (`ToolArguments`) and answers with a tool error that names each unknown argument and, when only the case differs, the spelling meant. It is a tool error, not a protocol error, because the model is what has to correct the call. Only `arguments` is checked: `_meta` and anything else a client adds travel beside it in `params`. `ToolArgumentTests` asserts every tool accepts all of its own schema's names, and drives the filter through a real `McpClient`. |
+| D25 | **Each release is listed in the official MCP Registry by the build, after nuget.org.** `PublishMcpRegistry` runs in `publish.yml` after `Publish` and posts `.mcp/server.json` to `registry.modelcontextprotocol.io` as `io.github.lahma/bitbucket-mcp`, logged in with a registry token exchanged for the job's GitHub OIDC token — no secret, and no `mcp-publisher` binary downloaded into the release path, for the reason D17 keeps the NuGet exchange in C#. The registry refuses a NuGet entry until nuget.org serves the README of that exact version with `mcp-name: <server name>` in it (its ownership proof), and nuget.org takes minutes to validate and index a push, so the target first polls that README, through the service index's `ReadmeUriTemplate/6.13.0`, for up to 40 minutes. It runs last so it can neither hold up nor undo the nuget.org push, and a rerun is safe: a version the registry already lists is reported and skipped, since versions there are immutable. |
 
 ### Risks carried (R3–R5)
 
@@ -318,7 +319,8 @@ transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and n
 .claude/CLAUDE.md           Imports AGENTS.md for Claude Code — under .claude/, because the root is
                             the plugin's root (see *The plugin and its marketplace*)
 .mcp/server.json            MCP server manifest (D17), packed into the NuGet package at
-                            /.mcp/server.json; its version must match CHANGELOG.md (test-enforced)
+                            /.mcp/server.json and posted to the MCP Registry (D25); its version
+                            must match CHANGELOG.md (test-enforced)
 src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-mcp
   Program.cs                Entry point — hands argv straight to the CLI dispatcher
   McpServerSetup.cs         DI wiring, JSON options (D6), tool registration with the argument-name
@@ -473,10 +475,10 @@ on every push and pull request.
 ## Release engineering
 
 Releases are cut by pushing a `v*` tag, which starts **two independent workflows**:
-`release.yml` (binaries + the GitHub Release) and `publish.yml` (nuget.org, D17 — *The NuGet leg*
-below). They do not depend on each other, deliberately: the AOT binaries are the product, so a
-nuget.org outage or a policy mismatch must not be able to hold up the GitHub Release, and neither
-must the reverse.
+`release.yml` (binaries + the GitHub Release) and `publish.yml` (nuget.org, then the MCP Registry —
+D17, D25 and *The NuGet leg* below). They do not depend on each other, deliberately: the AOT
+binaries are the product, so a nuget.org outage or a policy mismatch must not be able to hold up the
+GitHub Release, and neither must the reverse.
 
 `.github/workflows/release.yml` is hand-written (the `[GitHubActions]` generator has no matrix
 support) and runs five publish legs — one per RID, each on its own hardware — followed by a
@@ -547,7 +549,7 @@ Three properties of the release path were verified end to end by a throwaway `v0
 `.github/workflows/publish.yml` is **generated** from the second `[GitHubActions]` attribute in
 `build/Build.CI.GitHubActions.cs` (hard rule 2 — never hand-edit it; any build run regenerates it,
 or `dotnet fallout --generate-configuration GitHubActions_publish --host GitHubActions`). One
-Ubuntu job runs `dotnet fallout Compile Test Pack Publish` with
+Ubuntu job runs `dotnet fallout Compile Test Pack Publish PublishMcpRegistry` with
 `permissions: { contents: read, id-token: write }`, `environment: nuget` and
 `env: NUGET_USER: lahma`.
 
@@ -609,3 +611,29 @@ Publishing → policy owner `lahma`, Repository Owner `lahma`, Repository `bitbu
 File `publish.yml` (filename only, **not** `release.yml` and not the `.github/workflows/` path),
 Environment `nuget`. A policy covers every package the selected owner owns; there is no per-package
 scoping.
+
+### The MCP Registry step
+
+`PublishMcpRegistry` (D25) is the last target of the same job, and needs no setup on the registry:
+a GitHub OIDC token from a repository owned by `lahma` is what grants the `io.github.lahma/*`
+namespace, and the job already has `id-token: write`. In order, it asserts the same context as
+`Publish`; asks `GET /v0/servers/{name}/versions/{version}` whether the version is listed (`200`
+reports and stops, `404` goes on); waits for nuget.org to serve the version's README and checks it
+carries the `mcp-name` marker; exchanges an OIDC token with audience
+`https://registry.modelcontextprotocol.io` at `POST /v0/auth/github-oidc` (body
+`{"oidc_token": …}`, answer `registry_token`, `add-mask`ed); and posts the manifest to
+`POST /v0/publish`. The exchange answers a bogus token with `401 "Token exchange failed"`, which
+proves the request shape (verified 2026-11-18).
+
+The local ladder is the one above with the target swapped:
+
+```powershell
+dotnet fallout PublishMcpRegistry --skip           # skipped off a tag
+$env:GITHUB_ACTIONS='true'; $env:NUGET_USER='lahma'; $env:GITHUB_REF_NAME='v1.0.0'
+dotnet fallout PublishMcpRegistry --skip           # must fail with "GitHub OIDC is unavailable"
+```
+
+The lookup and the README wait are live, so how far a local run gets depends on the version
+CHANGELOG.md declares: before nuget.org serves it, the run sits in the README wait, logging every
+30 s; once it is served, it reaches the OIDC failure, the success signal; once the registry lists
+it, it stops at the lookup with "already lists".

@@ -1,5 +1,9 @@
 using System;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
+using System.Threading;
 
 using Fallout.Common;
 using Fallout.Common.CI.GitHubActions;
@@ -16,7 +20,9 @@ using static Fallout.Common.Tools.DotNet.DotNetTasks;
 /// <summary>
 /// The NuGet distribution channel (D17): <c>Pack</c> builds the framework-dependent .NET tool
 /// package and <c>Publish</c> pushes it to nuget.org with a short-lived API key minted from the
-/// workflow's GitHub OIDC token (trusted publishing - no stored NuGet API key anywhere).
+/// workflow's GitHub OIDC token (trusted publishing - no stored NuGet API key anywhere). Then
+/// <c>PublishMcpRegistry</c> lists that version in the official MCP Registry (D25), with a
+/// registry token minted from the same kind of OIDC token.
 /// </summary>
 /// <remarks>
 /// The Native AOT binaries on GitHub Releases remain the primary channel; this one exists so a
@@ -35,10 +41,26 @@ partial class Build
     const string NuGetTokenServiceUrl = "https://www.nuget.org/api/v2/token";
 
     /// <summary>
-    /// Any non-empty User-Agent will do, but there must be one - see
-    /// <see cref="GetTrustedPublishingApiKey"/>.
+    /// Sent with every request the build makes to nuget.org and the MCP Registry. Any non-empty
+    /// User-Agent will do, but there must be one - see <see cref="GetTrustedPublishingApiKey"/>.
     /// </summary>
-    const string NuGetUserAgent = "bitbucket-mcp-build/1.0";
+    const string BuildUserAgent = "bitbucket-mcp-build/1.0";
+
+    const string McpRegistryUrl = "https://registry.modelcontextprotocol.io";
+
+    /// <summary>The OIDC audience the registry checks: its own scheme and host.</summary>
+    const string McpRegistryAudience = "https://registry.modelcontextprotocol.io";
+
+    /// <summary>The nuget.org service-index resource a package version's README is served through.</summary>
+    const string ReadmeUriTemplateResource = "ReadmeUriTemplate/6.13.0";
+
+    /// <summary>
+    /// How long <c>PublishMcpRegistry</c> waits for nuget.org to serve the README of the version just
+    /// pushed. Validation and indexing took about nine minutes for 1.3.1; this leaves room for a slow day.
+    /// </summary>
+    static readonly TimeSpan NuGetReadmeTimeout = TimeSpan.FromMinutes(40);
+
+    static readonly TimeSpan NuGetReadmePollInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>The workflow file the nuget.org trusted publishing policy is scoped to.</summary>
     /// <remarks>
@@ -52,6 +74,7 @@ partial class Build
     readonly string NuGetUser;
 
     AbsolutePath PackagesDirectory => ArtifactsDirectory / "packages";
+    AbsolutePath ServerManifestFile => RootDirectory / ".mcp" / "server.json";
 
     Target Pack => _ => _
         .Description("Packs the server as a .NET tool / MCP server NuGet package into artifacts/packages")
@@ -109,6 +132,135 @@ partial class Build
                 .AddPair("Version", Version));
         });
 
+    /// <remarks>
+    /// D25. The registry proves ownership of <c>io.github.lahma/...</c> by finding
+    /// <c>mcp-name: &lt;server name&gt;</c> in the README nuget.org serves for this exact version, and
+    /// refuses the publish until it can, so the target first waits for that README - through the same
+    /// service-index resource the registry reads it from. It runs after <c>Publish</c>, so a registry
+    /// failure cannot hold up or undo the nuget.org push; it fails the job loudly instead, and a
+    /// re-run is safe: <c>Publish</c> skips the duplicate push, and a version the registry already
+    /// lists is reported and left alone (versions there are immutable).
+    /// </remarks>
+    Target PublishMcpRegistry => _ => _
+        .Description("Lists .mcp/server.json in the MCP Registry once nuget.org serves this version's README")
+        .DependsOn(Publish)
+        // Not ShouldPublish(): Publish already explained the skip, and the summary names this condition.
+        .OnlyWhenDynamic(() => IsTaggedBuild)
+        .Executes(() =>
+        {
+            AssertPublishContext();
+
+            var manifest = JsonNode.Parse(ServerManifestFile.ReadAllText())!;
+            var serverName = manifest["name"]!.GetValue<string>();
+            var packageId = manifest["packages"]![0]!["identifier"]!.GetValue<string>();
+
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent);
+
+            if (IsListedInMcpRegistry(client, serverName))
+            {
+                Log.Information("The MCP Registry already lists {Server} {Version}; nothing to publish", serverName, Version);
+                ReportSummary(_ => _.AddPair("Registry", $"{serverName} {Version} (already listed)"));
+                return;
+            }
+
+            WaitForPackageReadme(client, packageId, serverName);
+
+            var registryToken = client
+                .CreateRequest(HttpMethod.Post, $"{McpRegistryUrl}/v0/auth/github-oidc")
+                .WithJsonContent(new { oidc_token = GetGitHubOidcToken(McpRegistryAudience) })
+                .GetResponse()
+                .AssertResponse(x => x.IsSuccessStatusCode
+                    ? null
+                    : $"MCP Registry token exchange failed ({(int) x.StatusCode}): " +
+                      $"{x.Content.ReadAsStringAsync().GetAwaiter().GetResult()}. The job needs " +
+                      "'permissions: id-token: write', and the repository owner must own the io.github.<owner> " +
+                      $"namespace of '{serverName}'.")
+                .GetBodyAsJsonObject().GetAwaiter().GetResult()["registry_token"]
+                .NotNull("The MCP Registry returned no registry_token")
+                .GetValue<string>();
+
+            GitHubActions.Instance?.WriteCommand("add-mask", registryToken);
+
+            client
+                .CreateRequest(HttpMethod.Post, $"{McpRegistryUrl}/v0/publish")
+                .WithBearerAuthentication(registryToken)
+                .WithJsonContent(manifest)
+                .GetResponse()
+                .AssertResponse(x => x.IsSuccessStatusCode
+                    ? null
+                    : $"MCP Registry publish of {serverName} {Version} failed ({(int) x.StatusCode}): " +
+                      $"{x.Content.ReadAsStringAsync().GetAwaiter().GetResult()}. The nuget.org package is already " +
+                      "pushed; fix the cause and re-run the job.");
+
+            Log.Information("Published {Server} {Version} to the MCP Registry", serverName, Version);
+            ReportSummary(_ => _.AddPair("Registry", $"{serverName} {Version}"));
+        });
+
+    /// <summary>
+    /// Whether the registry already lists this version: <c>200</c> from the version endpoint, against
+    /// <c>404</c> for one it does not have. Anything else is an answer the publish cannot act on.
+    /// </summary>
+    bool IsListedInMcpRegistry(HttpClient client, string serverName)
+    {
+        var url = $"{McpRegistryUrl}/v0/servers/{Uri.EscapeDataString(serverName)}/versions/{Uri.EscapeDataString(Version)}";
+
+        using var response = client.GetAsync(url).GetAwaiter().GetResult();
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Could not ask the MCP Registry whether it lists {serverName} {Version}: GET {url} answered " +
+            $"{(int) response.StatusCode}. Re-run the job once the registry answers.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Polls the README nuget.org serves for this version until it exists, then checks it carries the
+    /// registry's ownership marker - a README without it is refused outright, so waiting longer would
+    /// not help.
+    /// </summary>
+    void WaitForPackageReadme(HttpClient client, string packageId, string serverName)
+    {
+        var template = JsonNode.Parse(client.GetStringAsync(NuGetSource).GetAwaiter().GetResult())!["resources"]!
+            .AsArray()
+            .FirstOrDefault(x => x!["@type"]!.GetValue<string>() == ReadmeUriTemplateResource)
+            .NotNull($"nuget.org's service index has no {ReadmeUriTemplateResource}")!["@id"]!
+            .GetValue<string>();
+
+        var url = template
+            .Replace("{lower_id}", packageId.ToLowerInvariant(), StringComparison.Ordinal)
+            .Replace("{lower_version}", Version.ToLowerInvariant(), StringComparison.Ordinal);
+        var marker = $"mcp-name: {serverName}";
+        var deadline = DateTimeOffset.UtcNow + NuGetReadmeTimeout;
+
+        while (true)
+        {
+            using var response = client.GetAsync(url).GetAwaiter().GetResult();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Assert.True(
+                    response.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains(marker, StringComparison.Ordinal),
+                    $"nuget.org serves the README of {packageId} {Version} without '{marker}', so the MCP Registry would " +
+                    "refuse the publish. README.md must carry the marker in the version it is packed into.");
+                return;
+            }
+
+            Assert.True(DateTimeOffset.UtcNow < deadline,
+                $"nuget.org still did not serve {url} after {NuGetReadmeTimeout.TotalMinutes:0} minutes. The package " +
+                "is pushed; re-run the job once it does.");
+
+            Log.Information("Waiting for nuget.org to serve the README of {Package} {Version} ({Status})",
+                packageId, Version, (int) response.StatusCode);
+            Thread.Sleep(NuGetReadmePollInterval);
+        }
+    }
+
     /// <summary>
     /// The tag gate. There is exactly one thing a <c>Publish</c> run can legitimately be - a v* tag
     /// build pushing to nuget.org - so anything else is skipped rather than failed, which keeps
@@ -156,10 +308,10 @@ partial class Build
     }
 
     /// <summary>
-    /// Exchanges the job's GitHub OIDC token for a short-lived nuget.org API key - what
-    /// <c>NuGet/login@v1</c> does, without taking a dependency on a marketplace action.
+    /// The job's GitHub OIDC token for one audience. Each consumer checks its own audience, so
+    /// nuget.org and the MCP Registry each get a token of their own.
     /// </summary>
-    string GetTrustedPublishingApiKey()
+    static string GetGitHubOidcToken(string audience)
     {
         const string MissingOidc =
             "GitHub OIDC is unavailable - the publish job needs 'permissions: id-token: write'";
@@ -170,6 +322,25 @@ partial class Build
             Environment.GetEnvironmentVariable("ACTIONS_ID_TOKEN_REQUEST_TOKEN"), MissingOidc);
 
         using var client = new HttpClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent);
+
+        return client
+            .CreateRequest(HttpMethod.Get, $"{requestUrl}&audience={Uri.EscapeDataString(audience)}")
+            .WithBearerAuthentication(requestToken)
+            .GetResponse()
+            .AssertSuccessfulStatusCode()
+            .GetBodyAsJsonObject().GetAwaiter().GetResult()["value"].GetValue<string>();
+    }
+
+    /// <summary>
+    /// Exchanges the job's GitHub OIDC token for a short-lived nuget.org API key - what
+    /// <c>NuGet/login@v1</c> does, without taking a dependency on a marketplace action.
+    /// </summary>
+    string GetTrustedPublishingApiKey()
+    {
+        var idToken = GetGitHubOidcToken(NuGetAudience);
+
+        using var client = new HttpClient();
 
         // REQUIRED. nuget.org's token endpoint sits behind Azure Front Door, which answers
         // HTTP 400 "A User-Agent header is required." to a request that carries none - and a bare
@@ -177,14 +348,7 @@ partial class Build
         // symptom of forgetting this is a 400 rather than the 401 a misconfiguration would give.
         // The JS http client behind NuGet/login always sends one, which is why only in-build .NET
         // callers ever hit it.
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(NuGetUserAgent);
-
-        var idToken = client
-            .CreateRequest(HttpMethod.Get, $"{requestUrl}&audience={Uri.EscapeDataString(NuGetAudience)}")
-            .WithBearerAuthentication(requestToken)
-            .GetResponse()
-            .AssertSuccessfulStatusCode()
-            .GetBodyAsJsonObject().GetAwaiter().GetResult()["value"].GetValue<string>();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent);
 
         var body = client
             .CreateRequest(HttpMethod.Post, NuGetTokenServiceUrl)

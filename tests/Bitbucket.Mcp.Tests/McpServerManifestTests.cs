@@ -7,7 +7,8 @@ namespace Bitbucket.Mcp.Tests;
 /// <summary>
 /// <c>.mcp/server.json</c> is the MCP server manifest packed into the NuGet package at
 /// <c>/.mcp/server.json</c>, where nuget.org reads it to render the package's MCP tab and to
-/// generate client configuration.
+/// generate client configuration, and which the build posts to the official MCP Registry on every
+/// release (D25).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -80,9 +81,9 @@ public class McpServerManifestTests
     }
 
     /// <summary>
-    /// The shape the official MCP Registry accepts. Nothing publishes there yet, but the registry
-    /// proves ownership against the README packed into the nupkg of the exact version being listed,
-    /// so a version shipped without these can never be listed later.
+    /// The shape the official MCP Registry accepts. The registry proves ownership against the README
+    /// packed into the nupkg of the exact version being listed, so a version shipped without these
+    /// can never be listed later - the release would push to nuget.org and then fail its registry step.
     /// </summary>
     [Test]
     public void ManifestIsOneTheMcpRegistryAccepts()
