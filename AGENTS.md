@@ -439,8 +439,8 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
 - **`NoStdoutWritesTest`.** Scans the production sources for `Console.Write*` and fails on any
   outside `src/Bitbucket.Mcp/Cli/` (hard rule 3). In server mode stdout is the protocol channel.
 - **The shipped skill names the tools that exist, and all of them.** `AgentSkillTests` reads
-  `.claude/skills/bitbucket-pull-requests/SKILL.md` (the same root walk `NoStdoutWritesTest` uses)
-  and cross-checks every backticked tool-shaped identifier against the reflected inventory, in both
+  `.claude/skills/bitbucket-pull-requests/SKILL.md` (found through `RepositoryRoot`, like every
+  test that reads checked-in files) and cross-checks every backticked tool-shaped identifier against the reflected inventory, in both
   directions: a name no tool answers to fails, and so does a tool the skill never mentions. Tool
   *parameter* names are excluded by reflection, not by a list, so `mergeStrategy` does not read as a
   missing tool. Nothing else loads that file, so without this it would keep advertising an older
@@ -461,8 +461,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   credential surface matches `.mcp/server.json` placeholder for placeholder. Nothing in the build
   reads these manifests back, exactly as with the server manifest.
 - **`.mcp/server.json` agrees with the version authority.** `McpServerManifestTests` reads the
-  checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root (the same
-  root walk `NoStdoutWritesTest` uses) and asserts the manifest's `version` and its NuGet entry's
+  checked-in manifest, `CHANGELOG.md` and the server csproj from the repository root and asserts the manifest's `version` and its NuGet entry's
   `version` both equal the changelog's top version, and that its `identifier` equals `<PackageId>`.
   Nothing in the build reads the manifest back, so without this a released package would keep
   advertising an old version indefinitely.

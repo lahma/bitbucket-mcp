@@ -36,9 +36,6 @@ namespace Bitbucket.Mcp.Tests;
 /// </remarks>
 public class PluginManifestTests
 {
-    /// <summary>The file that identifies the repository root when walking up from the test assembly.</summary>
-    private const string RootMarker = "bitbucket-mcp.slnx";
-
     private const string MarketplacePath = ".claude-plugin/marketplace.json";
     private const string PluginPath = ".claude-plugin/plugin.json";
     private const string ServerManifestPath = ".mcp/server.json";
@@ -55,7 +52,7 @@ public class PluginManifestTests
     [Test]
     public void TheMarketplaceListsThisRepositoryAsItsOnePlugin()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
 
         using var marketplace = Read(root, MarketplacePath);
         using var plugin = Read(root, PluginPath);
@@ -79,7 +76,7 @@ public class PluginManifestTests
     [Test]
     public void ThePluginVersionIsTheVersionAuthority()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
 
         using var plugin = Read(root, PluginPath);
 
@@ -94,7 +91,7 @@ public class PluginManifestTests
     [Test]
     public void TheBundledServerIsPinnedToThatSameVersion()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         var version = ReadChangelogVersion(root);
 
         using var plugin = Read(root, PluginPath);
@@ -115,7 +112,7 @@ public class PluginManifestTests
     [Test]
     public void EveryDeclaredSkillPathResolvesToASkill()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
 
         using var plugin = Read(root, PluginPath);
 
@@ -145,7 +142,7 @@ public class PluginManifestTests
     [Test]
     public void EveryDocumentedCredentialIsPromptedForAndPassedThrough()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
 
         using var plugin = Read(root, PluginPath);
         using var server = Read(root, ServerManifestPath);
@@ -222,22 +219,5 @@ public class PluginManifestTests
 
         Assert.That(first, Does.StartWith("# "));
         return first[2..].Trim();
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, RootMarker)))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException($"Could not find {RootMarker} above {AppContext.BaseDirectory}.");
     }
 }
