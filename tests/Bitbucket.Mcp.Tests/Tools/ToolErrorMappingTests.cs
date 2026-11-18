@@ -303,34 +303,6 @@ public class ToolErrorMappingTests
     }
 
     /// <summary>
-    /// Bitbucket may queue a large merge instead of performing it. Polling is out of scope, so the
-    /// honest answer is "it may or may not have happened, go and look" — never a silent success and
-    /// never an invitation to merge again.
-    /// </summary>
-    [Test]
-    public async Task AQueuedMergeIsReportedRatherThanTreatedAsSuccess()
-    {
-        using var handler = new StubHttpMessageHandler();
-        handler.Enqueue(HttpStatusCode.Accepted, """{"task_status":"PENDING"}""");
-
-        using var client = ToolTestHost.CreateClient(handler);
-
-        var exception = await Expect.ThrowsAsync<McpException>(() =>
-            PullRequestWriteTools.MergePullRequestAsync(
-                client,
-                ToolTestHost.CreateOptions(),
-                Repository,
-                42,
-                Workspace,
-                cancellationToken: TestContext.CurrentContext.CancellationToken));
-
-        Assert.That(exception.Message, Does.Contain("queued").IgnoreCase);
-        Assert.That(exception.Message, Does.Contain("PENDING"));
-        Assert.That(exception.Message, Does.Contain("does not poll"));
-        Assert.That(exception.Message, Does.Contain("Bitbucket UI"));
-    }
-
-    /// <summary>
     /// A 429 that Bitbucket says to retry immediately is retried to the pipeline's limit; the
     /// message then has to say that waiting longer — not calling again — is the fix.
     /// </summary>

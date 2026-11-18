@@ -63,11 +63,13 @@ partial class Build : FalloutBuild,
         "listDefaultReviewers",
         "listPullRequestStatuses",
         "listPullRequestTasks",
+        "getPullRequestMergeability",
 
         // PullRequestWriteTools
         "createPullRequest",
         "updatePullRequest",
         "addPullRequestComment",
+        "updatePullRequestComment",
         "resolvePullRequestComment",
         "addPullRequestTask",
         "updatePullRequestTask",

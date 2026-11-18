@@ -737,7 +737,7 @@ public class BitbucketApiClientTests
             client.UnrequestChangesAsync(".", Repository, 412, cancellationToken));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            client.MergeAsync("..", Repository, 412, new MergeRequest(), cancellationToken));
+            client.MergeAsync("..", Repository, 412, new MergeRequest(), cancellationToken: cancellationToken));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             client.DeclineAsync(Workspace, "..", 412, cancellationToken: cancellationToken));
@@ -957,43 +957,118 @@ public class BitbucketApiClientTests
     // ------------------------------------------------------------------ merge
 
     [Test]
-    public async Task MergeAsksForTheTaskStatusAlongsideThePullRequest()
+    public async Task MergeAsksForThePullRequestDetail()
     {
         using var stub = new StubHttpMessageHandler();
         stub.EnqueueJson(HttpFixtures.Read("http-pullrequest-merged.json"));
 
         using var client = CreateClient(stub);
 
-        var merged = await client.MergeAsync(
+        var outcome = await client.MergeAsync(
             Workspace,
             Repository,
             412,
             new MergeRequest { Message = "Merged via MCP", CloseSourceBranch = true, MergeStrategy = "squash" },
-            TestContext.CurrentContext.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         var request = Expect.Single(stub.Requests);
 
         Assert.That(request.Method, Is.EqualTo(HttpMethod.Post));
         Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/merge"));
-
-        // A queued merge answers with nothing but task_status; leaving it out of the field list
-        // would leave the "merge was queued" error with nothing to quote.
-        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail + ",task_status"));
-
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.PullRequestDetail));
         Assert.That(request.Body, Is.EqualTo("""{"message":"Merged via MCP","close_source_branch":true,"merge_strategy":"squash"}"""));
 
+        var merged = Expect.NotNull(outcome.PullRequest);
         Assert.That(merged.State, Is.EqualTo("MERGED"));
         Assert.That(merged.MergeCommit?.Hash, Is.EqualTo("fedcba987654"));
         Assert.That(merged.ClosedBy?.DisplayName, Is.EqualTo("Ada Byron"));
+        Assert.That(outcome.TaskId, Is.Null);
     }
 
+    /// <summary>
+    /// A merge into a queued branch, or one past Bitbucket's synchronous timeout, answers 202 with
+    /// the task in Location. The task is followed, and a merge that lands in time comes back as a
+    /// 200 would have.
+    /// </summary>
     [Test]
-    public async Task AQueuedMergeIsReportedAsAnActionableFailureRatherThanPolled()
+    public async Task AMergeTaskIsFollowedUntilItLands()
     {
-        var body = HttpFixtures.Read("http-merge-queued.json");
+        var time = new ManualTimeProvider();
+        var merged = HttpFixtures.Read("http-pullrequest-merged.json");
 
         using var stub = new StubHttpMessageHandler();
-        stub.EnqueueJson(body, HttpStatusCode.Accepted);
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.EnqueueJson(QueuedTaskStatus);
+        stub.EnqueueJson($$"""{"task_status":"SUCCESS","merge_result":{{merged}}}""");
+
+        using var client = CreateClient(stub, timeProvider: time);
+
+        var waits = new List<MergeWait>();
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            waits.Add,
+            TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(Expect.NotNull(outcome.PullRequest).State, Is.EqualTo("MERGED"));
+        Assert.That(outcome.TaskId, Is.Null);
+
+        Assert.That(stub.Requests.Count, Is.EqualTo(3));
+        Assert.That(stub.Requests[1].Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.Path(stub.Requests[1].Uri), Is.EqualTo(MergeTaskPath));
+        Assert.That(RequestUrl.Path(stub.Requests[2].Uri), Is.EqualTo(MergeTaskPath));
+
+        // One look per scheduled delay, and the first unanswered one is reported as queued.
+        Assert.That(time.Delays, Is.EqualTo(BitbucketApiClient.MergeTaskPollDelays[..2]));
+        Assert.That(waits, Is.EqualTo(new[] { new MergeWait(1, BitbucketApiClient.MergeTaskPollDelays.Length, InMergeQueue: true) }));
+    }
+
+    /// <summary>
+    /// A merge queue can hold a pull request for as long as its builds take. After the schedule the
+    /// task itself comes back — never an error, because the merge is under way and merging again is
+    /// the mistake to prevent.
+    /// </summary>
+    [Test]
+    public async Task AMergeStillPendingAfterTheScheduleComesBackAsItsTask()
+    {
+        var time = new ManualTimeProvider();
+
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+
+        foreach (var _ in BitbucketApiClient.MergeTaskPollDelays)
+        {
+            stub.EnqueueJson(QueuedTaskStatus);
+        }
+
+        using var client = CreateClient(stub, timeProvider: time);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(outcome.PullRequest, Is.Null);
+        Assert.That(outcome.TaskId, Is.EqualTo(MergeTaskId));
+        Assert.That(outcome.InMergeQueue, Is.True);
+        Assert.That(stub.Requests.Count, Is.EqualTo(1 + BitbucketApiClient.MergeTaskPollDelays.Length));
+        Assert.That(time.Delays, Is.EqualTo(BitbucketApiClient.MergeTaskPollDelays));
+        Assert.That(time.Delays.Aggregate(TimeSpan.Zero, (sum, delay) => sum + delay), Is.EqualTo(TimeSpan.FromSeconds(25)));
+    }
+
+    /// <summary>A task that fails answers the poll with an error, which is the merge's failure.</summary>
+    [Test]
+    public async Task AFailedMergeTaskSurfacesAsTheMergeFailure()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.Enqueue(
+            HttpStatusCode.BadRequest,
+            """{"type":"error","error":{"message":"The pull request left the merge queue without merging."}}""");
 
         using var client = CreateClient(stub);
 
@@ -1002,17 +1077,81 @@ public class BitbucketApiClientTests
             Repository,
             412,
             new MergeRequest(),
-            TestContext.CurrentContext.CancellationToken));
+            cancellationToken: TestContext.CurrentContext.CancellationToken));
 
-        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
-        Assert.That(exception.RawBody, Is.EqualTo(body));
+        Assert.That(exception.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(exception.Message, Does.Contain("left the merge queue"));
+    }
 
-        // The message has to say what happened and what to do; re-running a merge that may have
-        // succeeded is the expensive mistake here.
-        Assert.That(exception.Message, Does.Contain("queued"));
-        Assert.That(exception.Message, Does.Contain("task status PENDING"));
-        Assert.That(exception.Message, Does.Contain("Bitbucket UI"));
-        Assert.That(exception.Message, Does.Contain("only re-run the merge if it did not"));
+    /// <summary>A success that does not carry the pull request reads it, so the shape matches a 200.</summary>
+    [Test]
+    public async Task ASuccessWithoutTheMergedPullRequestReadsItBack()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskUrl));
+        stub.EnqueueJson("""{"task_status":"SUCCESS"}""");
+        stub.EnqueueJson(HttpFixtures.Read("http-pullrequest-merged.json"));
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(Expect.NotNull(outcome.PullRequest).MergeCommit?.Hash, Is.EqualTo("fedcba987654"));
+        Assert.That(RequestUrl.Path(stub.Requests[2].Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412"));
+    }
+
+    /// <summary>
+    /// Location is server-supplied. Only this pull request's own task-status endpoint on the API host
+    /// is followed, and only by id: anywhere else is not requested at all.
+    /// </summary>
+    [TestCase("https://evil.example/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc")]
+    [TestCase("http://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/413/merge/task-status/abc")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/abc/../../../../decline")]
+    [TestCase("https://api.bitbucket.org/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/")]
+    public async Task AMergeTaskLinkThatIsNotThisPullRequestsIsNeverFollowed(string location)
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(location));
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(stub.Requests, Has.Exactly(1).Items);
+        Assert.That(outcome.PullRequest, Is.Null);
+        Assert.That(outcome.TaskId, Is.Null);
+    }
+
+    /// <summary>A relative Location resolves against the merge request, like any other.</summary>
+    [Test]
+    public async Task ARelativeMergeTaskLinkIsFollowed()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(_ => MergeAccepted(MergeTaskPath));
+        stub.EnqueueJson($$"""{"task_status":"SUCCESS","merge_result":{{HttpFixtures.Read("http-pullrequest-merged.json")}}}""");
+
+        using var client = CreateClient(stub);
+
+        var outcome = await client.MergeAsync(
+            Workspace,
+            Repository,
+            412,
+            new MergeRequest(),
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(outcome.PullRequest, Is.Not.Null);
+        Assert.That(RequestUrl.Path(stub.Requests[1].Uri), Is.EqualTo(MergeTaskPath));
     }
 
     [Test]
@@ -1028,9 +1167,114 @@ public class BitbucketApiClientTests
             Repository,
             412,
             new MergeRequest(),
-            TestContext.CurrentContext.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         Assert.That(Expect.Single(stub.Requests).Body, Is.EqualTo("{}"));
+    }
+
+    // ------------------------------------------- mergeability, comment edits, list filters
+
+    [Test]
+    public async Task MergeabilityChecksAreReadFromTheirOwnEndpoint()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(HttpFixtures.Read("http-mergeability-checks.json"));
+
+        using var client = CreateClient(stub);
+
+        var checks = await client.GetMergeabilityChecksAsync(Workspace, Repository, 412, TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Get));
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/mergeability/checks"));
+
+        var values = Expect.NotNull(checks.Values);
+        Assert.That(values.Count, Is.EqualTo(6));
+
+        var approvals = values[3];
+        Assert.That(approvals.Check?.Kind, Is.EqualTo("minimum_approvals"));
+        Assert.That(approvals.Blocking, Is.True);
+        Assert.That(Expect.NotNull(approvals.Requirement).GetProperty("minimum_approvals").GetInt32(), Is.EqualTo(2));
+        Assert.That(Expect.NotNull(approvals.Observed).GetProperty("approval_count").GetInt32(), Is.EqualTo(1));
+
+        Assert.That(values[0].State, Is.EqualTo("OPEN"));
+        Assert.That(values[2].Reason, Is.EqualTo("clean"));
+        Assert.That(values[5].Check?.Name, Is.EqualTo("License scan"));
+        Assert.That(values[5].Message, Is.EqualTo("No new licenses."));
+    }
+
+    [Test]
+    public async Task EditingACommentPutsOnlyItsNewText()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(HttpFixtures.Read("http-comment-created.json"));
+
+        using var client = CreateClient(stub);
+
+        _ = await client.UpdateCommentAsync(Workspace, Repository, 412, 1001, "Fixed wording.", TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Put));
+        Assert.That(RequestUrl.Path(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments/1001"));
+        Assert.That(RequestUrl.QueryValue(request.Uri, "fields"), Is.EqualTo(FieldSets.Comment));
+
+        // No inline and no parent: an edit changes the text and nothing else.
+        Assert.That(request.Body, Is.EqualTo("""{"content":{"raw":"Fixed wording."}}"""));
+    }
+
+    [Test]
+    public async Task DeletingACommentSendsADeleteWithNoBody()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.Enqueue(HttpStatusCode.NoContent);
+
+        using var client = CreateClient(stub);
+
+        await client.DeleteCommentAsync(Workspace, Repository, 412, 1001, TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(stub.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Delete));
+        Assert.That(RequestUrl.PathAndQuery(request.Uri), Is.EqualTo("/2.0/repositories/acme/widget-api/pullrequests/412/comments/1001"));
+        Assert.That(request.Body, Is.Null.Or.Empty);
+    }
+
+    /// <summary>
+    /// Deleted comments stay in Bitbucket's list, blanked. Filtering them in the query keeps a page
+    /// from coming back short — or empty, with a next page still set — after they are dropped.
+    /// </summary>
+    [Test]
+    public async Task CommentsAreListedWithoutTheDeletedOnes()
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(HttpFixtures.Read("http-comments-page.json"));
+
+        using var client = CreateClient(stub);
+
+        _ = await client.GetCommentsAsync(Workspace, Repository, 412, cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"), Is.EqualTo("deleted = false"));
+    }
+
+    [TestCase("{11111111-2222-3333-4444-555555555555}", "reviewers.uuid = \"{11111111-2222-3333-4444-555555555555}\"")]
+    [TestCase("ada", "reviewers.nickname = \"ada\"")]
+    public async Task ReviewerAndDestinationBranchBecomeBbqlClauses(string reviewer, string reviewerClause)
+    {
+        using var stub = new StubHttpMessageHandler();
+        stub.EnqueueJson(EmptyPage);
+
+        using var client = CreateClient(stub);
+
+        _ = await client.ListPullRequestsAsync(
+            Workspace,
+            Repository,
+            states: ["OPEN"],
+            reviewer: reviewer,
+            destinationBranch: "main",
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(
+            RequestUrl.QueryValue(Expect.Single(stub.Requests).Uri, "q"),
+            Is.EqualTo($"state = \"OPEN\" AND {reviewerClause} AND destination.branch.name = \"main\""));
     }
 
     // ---------------------------------------------------------------- decline
@@ -1360,9 +1604,27 @@ public class BitbucketApiClientTests
             Repository,
             412,
             body,
-            TestContext.CurrentContext.CancellationToken);
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
 
         return Expect.Single(stub.Requests);
+    }
+
+    private const string MergeTaskId = "e7c0ffee-1234-4a5b-8c9d-0123456789ab";
+    private const string MergeTaskPath = "/2.0/repositories/acme/widget-api/pullrequests/412/merge/task-status/" + MergeTaskId;
+    private const string MergeTaskUrl = "https://api.bitbucket.org" + MergeTaskPath;
+
+    /// <summary>
+    /// A task that is waiting in a merge queue. SYNTHETIC: shaped after the task-status endpoint's
+    /// description in Bitbucket's OpenAPI document, not captured from a live account.
+    /// </summary>
+    private const string QueuedTaskStatus = """{"task_status":"PENDING","queued_pullrequest":{"type":"queued_pullrequest"}}""";
+
+    /// <summary>Bitbucket's 202 for a merge it turned into a task, pointing at the task in Location.</summary>
+    private static HttpResponseMessage MergeAccepted(string location)
+    {
+        var response = StubHttpMessageHandler.CreateResponse(HttpStatusCode.Accepted, HttpFixtures.Read("http-merge-queued.json"));
+        response.Headers.Location = new Uri(location, UriKind.RelativeOrAbsolute);
+        return response;
     }
 
     private static BitbucketApiClient CreateClient(

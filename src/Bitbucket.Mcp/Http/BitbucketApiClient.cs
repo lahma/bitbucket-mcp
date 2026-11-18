@@ -59,12 +59,21 @@ internal sealed class BitbucketApiClient : IDisposable
     private const string ProjectUrl = "https://github.com/lahma/bitbucket-mcp";
 
     /// <summary>
-    /// The merge response's field list: the pull request detail plus <c>task_status</c>. An
-    /// inclusive <c>fields=</c> list returns only what it names, and a queued merge (<c>202</c>)
-    /// answers with nothing but <c>task_status</c> — omitting it would leave the "merge was queued"
-    /// error with nothing to quote.
+    /// How long <see cref="MergeAsync"/> waits between looks at a merge task, and so how many looks
+    /// it takes: 25 seconds in all. Long enough for a merge that merely ran past Bitbucket's
+    /// synchronous timeout; short enough to stay inside the tool-call timeouts MCP clients apply. A
+    /// merge queue can hold a pull request for as long as its builds take, which no tool call should
+    /// wait out — that case comes back as the task, and the read tools follow it from there.
     /// </summary>
-    private const string MergeFields = FieldSets.PullRequestDetail + ",task_status";
+    internal static readonly TimeSpan[] MergeTaskPollDelays =
+    [
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(3),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(5),
+    ];
 
     private readonly HttpClient _httpClient;
     private readonly ILogger _logger;
@@ -158,6 +167,13 @@ internal sealed class BitbucketApiClient : IDisposable
     /// Restricts to pull requests opened from one branch, matched against <c>source.branch.name</c>.
     /// The name is quoted and escaped like any other literal.
     /// </param>
+    /// <param name="reviewer">
+    /// Restricts to pull requests with this reviewer, matched like <paramref name="author"/> against
+    /// <c>reviewers.uuid</c> or <c>reviewers.nickname</c>.
+    /// </param>
+    /// <param name="destinationBranch">
+    /// Restricts to pull requests into one branch, matched against <c>destination.branch.name</c>.
+    /// </param>
     /// <param name="query">An extra BBQL fragment, combined with the rest using <c>AND</c>.</param>
     /// <param name="sort">A sort field, for example <c>-updated_on</c>.</param>
     /// <param name="pageSize">Items per page; clamped to 1–100.</param>
@@ -173,6 +189,8 @@ internal sealed class BitbucketApiClient : IDisposable
         IReadOnlyList<string>? states = null,
         string? author = null,
         string? sourceBranch = null,
+        string? reviewer = null,
+        string? destinationBranch = null,
         string? query = null,
         string? sort = null,
         int? pageSize = null,
@@ -184,7 +202,7 @@ internal sealed class BitbucketApiClient : IDisposable
             : BitbucketRequestBuilder.Repository(workspace, repositorySlug)
                 .Segment("pullrequests")
                 .Query("fields", FieldSets.PullRequestList)
-                .Query("q", BuildPullRequestQuery(states, author, sourceBranch, query))
+                .Query("q", BuildPullRequestQuery(states, author, sourceBranch, reviewer, destinationBranch, query))
                 .Query("sort", sort)
                 .Query("pagelen", ClampPageSize(pageSize))
                 .Build();
@@ -278,8 +296,9 @@ internal sealed class BitbucketApiClient : IDisposable
     }
 
     /// <summary>
-    /// Lists a pull request's comments, general and inline, including deleted ones — Bitbucket
-    /// returns those with blanked content to keep threads intact, and the caller filters them.
+    /// Lists a pull request's comments, general and inline. Deleted comments — which Bitbucket keeps
+    /// in the list, blanked, so that a thread keeps its shape — are filtered out by the query, so a
+    /// page is not short of what it claims; the caller drops any that still arrive.
     /// </summary>
     /// <exception cref="InvalidCursorException"><paramref name="cursor"/> did not decode to an API URL.</exception>
     internal async Task<Page<CommentDto>> GetCommentsAsync(
@@ -295,6 +314,7 @@ internal sealed class BitbucketApiClient : IDisposable
             : PullRequest(workspace, repositorySlug, pullRequestId)
                 .Segment("comments")
                 .Query("fields", FieldSets.Comments)
+                .Query("q", "deleted = false")
                 .Query("pagelen", ClampPageSize(pageSize))
                 .Build();
 
@@ -374,6 +394,52 @@ internal sealed class BitbucketApiClient : IDisposable
 
         return await SendJsonAsync(request, BitbucketWireJsonContext.Default.CommentDto, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Replaces a comment's text. Only its author may; an inline comment keeps its anchor.
+    /// </summary>
+    internal async Task<CommentDto> UpdateCommentAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long commentId,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        var url = Comment(workspace, repositorySlug, pullRequestId, commentId)
+            .Query("fields", FieldSets.Comment)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonBody(
+                new CommentRequest { Content = new CommentContentRequest { Raw = content } },
+                BitbucketWireJsonContext.Default.CommentRequest),
+        };
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.CommentDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Deletes a comment. Bitbucket keeps a deleted comment in its thread with the text blanked, so
+    /// replies to it stay where they were.
+    /// </summary>
+    internal async Task DeleteCommentAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        long commentId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = Comment(workspace, repositorySlug, pullRequestId, commentId).Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+
+        await SendNoContentAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -864,27 +930,43 @@ internal sealed class BitbucketApiClient : IDisposable
         DeleteReviewStateAsync(workspace, repositorySlug, pullRequestId, "request-changes", cancellationToken);
 
     /// <summary>
-    /// Merges the pull request synchronously.
+    /// Merges the pull request, following the merge for up to <see cref="MergeTaskPollDelays"/> when
+    /// Bitbucket turns it into a task.
     /// </summary>
     /// <remarks>
-    /// Bitbucket may decide to queue a large merge instead, answering <c>202</c> with a task handle.
-    /// Polling that task is out of scope (it can take minutes, and a tool call that blocks that long
-    /// is worse than an honest error), so a queued merge is reported as a
-    /// <see cref="BitbucketApiException"/> with status <c>202</c> telling the user to check the
-    /// Bitbucket UI rather than re-running the merge blindly.
+    /// <para>
+    /// Bitbucket answers <c>200</c> with the merged pull request, or <c>202</c> with the task to poll
+    /// in <c>Location</c>: a merge that ran past its synchronous timeout, or any merge into a branch
+    /// with an active merge queue, which answers <c>202</c> even though <c>async</c> is not set. The
+    /// task is then polled on a fixed schedule; a merge that lands in time comes back exactly as a
+    /// <c>200</c> would, and one that does not comes back as its task, never as a failure — the merge
+    /// is under way, and calling it again is the mistake to prevent.
+    /// </para>
+    /// <para>
+    /// A failed task (a conflict, a ref that moved, a pull request that left the queue without
+    /// merging) answers the poll with an error, which surfaces as the
+    /// <see cref="BitbucketApiException"/> it is.
+    /// </para>
     /// </remarks>
-    internal async Task<PullRequestDto> MergeAsync(
+    /// <param name="workspace">Workspace URL segment.</param>
+    /// <param name="repositorySlug">Repository slug.</param>
+    /// <param name="pullRequestId">The pull request number.</param>
+    /// <param name="body">Strategy, message and branch handling.</param>
+    /// <param name="onWaiting">Called after every look at the task that found it unfinished.</param>
+    /// <param name="cancellationToken">Cancellation.</param>
+    internal async Task<MergeOutcome> MergeAsync(
         string workspace,
         string repositorySlug,
         int pullRequestId,
         MergeRequest body,
+        Action<MergeWait>? onWaiting = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(body);
 
         var url = PullRequest(workspace, repositorySlug, pullRequestId)
             .Segment("merge")
-            .Query("fields", MergeFields)
+            .Query("fields", FieldSets.PullRequestDetail)
             .Build();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -893,16 +975,108 @@ internal sealed class BitbucketApiClient : IDisposable
         };
 
         var attempts = new RetryAttemptCounter();
+        string? taskId;
 
-        using var response = await SendAsync(request, attempts, cancellationToken).ConfigureAwait(false);
-        await ThrowIfNotSuccessAsync(response, attempts.Value, cancellationToken).ConfigureAwait(false);
-
-        if (response.StatusCode == HttpStatusCode.Accepted)
+        // Scoped so that the 202 - whose body is never read - releases its connection before the
+        // polling starts, rather than holding it for the whole wait.
+        using (var response = await SendAsync(request, attempts, cancellationToken).ConfigureAwait(false))
         {
-            throw await CreateQueuedMergeExceptionAsync(response, attempts.Value, cancellationToken).ConfigureAwait(false);
+            await ThrowIfNotSuccessAsync(response, attempts.Value, cancellationToken).ConfigureAwait(false);
+
+            if (response.StatusCode != HttpStatusCode.Accepted)
+            {
+                var merged = await ReadJsonAsync(response, BitbucketWireJsonContext.Default.PullRequestDto, attempts.Value, cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new MergeOutcome { PullRequest = merged };
+            }
+
+            taskId = MergeTaskId(response.Headers.Location, request.RequestUri, workspace, repositorySlug, pullRequestId);
+
+            if (taskId is null)
+            {
+                _logger.LogWarning(
+                    "Bitbucket accepted the merge of pull request {PullRequest} without a task link this client follows ({Location})",
+                    pullRequestId,
+                    response.Headers.Location);
+
+                return new MergeOutcome();
+            }
         }
 
-        return await ReadJsonAsync(response, BitbucketWireJsonContext.Default.PullRequestDto, attempts.Value, cancellationToken)
+        var inMergeQueue = false;
+
+        for (var attempt = 0; attempt < MergeTaskPollDelays.Length; attempt++)
+        {
+            await Task.Delay(MergeTaskPollDelays[attempt], _timeProvider, cancellationToken).ConfigureAwait(false);
+
+            var status = await GetMergeTaskStatusAsync(workspace, repositorySlug, pullRequestId, taskId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (status.MergeResult is not null)
+            {
+                return new MergeOutcome { PullRequest = status.MergeResult };
+            }
+
+            if (status.Succeeded)
+            {
+                // A success that did not carry the pull request: read it, so the result is the same
+                // shape a synchronous merge has.
+                var merged = await GetPullRequestAsync(workspace, repositorySlug, pullRequestId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                return new MergeOutcome { PullRequest = merged };
+            }
+
+            inMergeQueue = status.InMergeQueue;
+            onWaiting?.Invoke(new MergeWait(attempt + 1, MergeTaskPollDelays.Length, inMergeQueue));
+        }
+
+        return new MergeOutcome { TaskId = taskId, InMergeQueue = inMergeQueue };
+    }
+
+    /// <summary>
+    /// Asks Bitbucket which of its merge checks the pull request passes right now — the checks the
+    /// merge endpoint would apply, evaluated without merging.
+    /// </summary>
+    /// <remarks>
+    /// The endpoint has a rate limit of its own and evaluates git mergeability, which is why it is
+    /// asked once before a merge rather than folded into every pull request read.
+    /// </remarks>
+    internal async Task<MergeabilityChecksDto> GetMergeabilityChecksAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = PullRequest(workspace, repositorySlug, pullRequestId)
+            .Segment("mergeability")
+            .Segment("checks")
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.MergeabilityChecksDto, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Reads a merge task's state. A failed task answers with an error instead.</summary>
+    internal async Task<MergeTaskStatusDto> GetMergeTaskStatusAsync(
+        string workspace,
+        string repositorySlug,
+        int pullRequestId,
+        string taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var url = PullRequest(workspace, repositorySlug, pullRequestId)
+            .Segment("merge")
+            .Segment("task-status")
+            .Segment(taskId)
+            .Build();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        return await SendJsonAsync(request, BitbucketWireJsonContext.Default.MergeTaskStatusDto, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -1016,6 +1190,52 @@ internal sealed class BitbucketApiClient : IDisposable
     }
 
     /// <summary>
+    /// The task id out of a <c>202</c>'s <c>Location</c>, or <see langword="null"/> when the link is
+    /// not this pull request's own task-status endpoint on the API host.
+    /// </summary>
+    /// <remarks>
+    /// Only the id is taken, and the poll URL is rebuilt from it: a server-supplied URL is never
+    /// requested as given, which is the same rule <see cref="BitbucketCursor"/> applies to
+    /// pagination links. A link anywhere else — another host, another pull request, a path that
+    /// does not end in one segment — is not followed at all.
+    /// </remarks>
+    /// <param name="location">The response's <c>Location</c> header.</param>
+    /// <param name="requestUri">The merge request's URI, which a relative <c>Location</c> resolves against.</param>
+    /// <param name="workspace">Workspace URL segment.</param>
+    /// <param name="repositorySlug">Repository slug.</param>
+    /// <param name="pullRequestId">The pull request number.</param>
+    private string? MergeTaskId(Uri? location, Uri? requestUri, string workspace, string repositorySlug, int pullRequestId)
+    {
+        if (location is null)
+        {
+            return null;
+        }
+
+        var target = location.IsAbsoluteUri ? location : new Uri(requestUri ?? _httpClient.BaseAddress!, location);
+        var expected = new Uri(
+            _httpClient.BaseAddress!,
+            PullRequest(workspace, repositorySlug, pullRequestId).Segment("merge").Segment("task-status").Build() + "/");
+
+        if (target.Scheme != Uri.UriSchemeHttps ||
+            !string.Equals(target.Host, expected.Host, StringComparison.OrdinalIgnoreCase) ||
+            !target.AbsolutePath.StartsWith(expected.AbsolutePath, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var segment = target.AbsolutePath[expected.AbsolutePath.Length..];
+
+        if (segment.Length == 0 || segment.Contains('/', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var taskId = Uri.UnescapeDataString(segment);
+
+        return taskId.Trim() is "" or "." or ".." ? null : taskId;
+    }
+
+    /// <summary>
     /// Composes the BBQL <c>q=</c> filter. Values are quoted and escaped;
     /// <paramref name="extra"/> is the caller's own fragment and is parenthesised so that its
     /// operator precedence cannot silently rearrange the rest.
@@ -1024,9 +1244,11 @@ internal sealed class BitbucketApiClient : IDisposable
         IReadOnlyList<string>? states,
         string? author,
         string? sourceBranch,
+        string? reviewer,
+        string? destinationBranch,
         string? extra)
     {
-        var clauses = new List<string>(4);
+        var clauses = new List<string>(6);
 
         if (states is not null)
         {
@@ -1050,21 +1272,19 @@ internal sealed class BitbucketApiClient : IDisposable
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(author))
-        {
-            var trimmed = author.Trim();
+        AddAccountClause(clauses, "author", author);
+        AddAccountClause(clauses, "reviewers", reviewer);
 
-            // Bitbucket account UUIDs are returned — and matched — in braced form. Anything else is
-            // taken as a nickname, which is the only other identifier BBQL exposes here.
-            var field = trimmed.StartsWith('{') ? "author.uuid" : "author.nickname";
-            clauses.Add($"{field} = {Quote(trimmed)}");
-        }
-
+        // Branch names only, with no refs/heads/ prefix — the spelling the pull request's own
+        // source.branch.name and destination.branch.name carry.
         if (!string.IsNullOrWhiteSpace(sourceBranch))
         {
-            // The branch name only, with no refs/heads/ prefix — the same spelling the pull
-            // request's own source.branch.name carries.
             clauses.Add($"source.branch.name = {Quote(sourceBranch.Trim())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(destinationBranch))
+        {
+            clauses.Add($"destination.branch.name = {Quote(destinationBranch.Trim())}");
         }
 
         if (!string.IsNullOrWhiteSpace(extra))
@@ -1073,6 +1293,22 @@ internal sealed class BitbucketApiClient : IDisposable
         }
 
         return clauses.Count == 0 ? null : string.Join(" AND ", clauses);
+    }
+
+    /// <summary>
+    /// Adds <c>{field}.uuid = …</c> or <c>{field}.nickname = …</c>. Bitbucket account UUIDs are
+    /// returned — and matched — in braced form; anything else is taken as a nickname, the only other
+    /// account identifier BBQL exposes.
+    /// </summary>
+    private static void AddAccountClause(List<string> clauses, string field, string? account)
+    {
+        if (string.IsNullOrWhiteSpace(account))
+        {
+            return;
+        }
+
+        var trimmed = account.Trim();
+        clauses.Add($"{field}.{(trimmed.StartsWith('{') ? "uuid" : "nickname")} = {Quote(trimmed)}");
     }
 
     /// <summary>Builder rooted at one pipeline run, addressed by UUID or by build number.</summary>
@@ -1284,37 +1520,6 @@ internal sealed class BitbucketApiClient : IDisposable
             // is not JSON, and the raw text travels on the exception regardless.
             return null;
         }
-    }
-
-    private static async Task<BitbucketApiException> CreateQueuedMergeExceptionAsync(
-        HttpResponseMessage response,
-        int retryAttempts,
-        CancellationToken cancellationToken)
-    {
-        var rawBody = await ReadBodySnippetAsync(response, cancellationToken).ConfigureAwait(false);
-        string? taskStatus = null;
-
-        if (!string.IsNullOrWhiteSpace(rawBody))
-        {
-            try
-            {
-                taskStatus = JsonSerializer
-                    .Deserialize(rawBody, BitbucketWireJsonContext.Default.MergeTaskStatusDto)?.TaskStatus;
-            }
-            catch (JsonException)
-            {
-                // The status is a nicety in the message; its absence changes no advice.
-            }
-        }
-
-        var status = string.IsNullOrWhiteSpace(taskStatus) ? string.Empty : $" (task status {taskStatus})";
-
-        var message =
-            $"Bitbucket queued this merge as a background task{status} instead of merging synchronously. " +
-            "This server does not poll merge tasks: open the pull request in the Bitbucket UI to see whether " +
-            "the merge completed, and only re-run the merge if it did not.";
-
-        return new BitbucketApiException(response.StatusCode, SyntheticError(message), rawBody, retryAttempts);
     }
 
     /// <summary>

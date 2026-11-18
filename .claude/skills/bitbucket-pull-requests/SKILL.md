@@ -8,7 +8,7 @@ description: >-
   failing and the question is why, and the bitbucket-mcp tools (`listPullRequests`,
   `getPullRequestDiff`, `addPullRequestComment`, `mergePullRequest`, `listPipelines`,
   `getPipelineStepLog` and the rest) are attached. Covers the order the calls go in: diffstat
-  before diff content, snippet-anchored inline comments, build statuses before a merge decision,
+  before diff content, snippet-anchored inline comments, a mergeability check before a merge,
   the failing step before its log, and when to ask local git instead of spending an API call.
 license: MIT
 compatibility: Requires the bitbucket-mcp MCP server, signed in and attached to the client. Bitbucket Cloud only.
@@ -23,7 +23,8 @@ what neither can: the order the calls go in, and what to do when one of them fai
 ## Review a pull request
 
 1. `listPullRequests` — find it. Open ones only unless `state` says otherwise, most recently
-   updated first. `sourceBranch` answers "does this branch already have one?".
+   updated first. `sourceBranch` answers "does this branch already have one?", `reviewer` "what
+   is waiting on my review?", `destinationBranch` "what is going into `main`?".
 2. `getPullRequest` — description, reviewers, their approvals, and `url`. Read it before writing
    anything to it.
 3. `getPullRequestDiff` with no `paths` — the changed-file list. **Always this first.** A
@@ -49,20 +50,32 @@ what neither can: the order the calls go in, and what to do when one of them fai
 
 Coming back to a review you already left:
 
+- `getPullRequestComments` with `unresolvedOnly=true` — the threads still waiting for an answer,
+  without the settled ones.
 - `updatePullRequestTask` with `state="RESOLVED"` ticks a task off. `resolvePullRequestComment`
   marks the thread resolved. Do both — they are separate counters, and a repository can gate on
   either.
 - `getPullRequestDiff` again with the same `paths` to see what the author actually changed.
+- A comment of yours that was wrong, posted twice or put on the wrong line: `updatePullRequestComment`
+  with `content` to correct it, or `delete=true` to withdraw it — not a second comment below the
+  first. An edited inline comment keeps its line; to move it, delete it and add it again.
 
 ## Merge or decline
 
-- `listPullRequestStatuses` **before** the decision. Bitbucket merges over a failing build when the
-  repository does not require it, and an empty list means nothing has reported yet — which is not
-  the same as passing.
-- `getPullRequest` to confirm it is the pull request you think it is, and that it is approved.
-- `mergePullRequest` — immediate, and not undoable from here. Omit `mergeStrategy` to take the
-  repository's default; a strategy it has disabled is rejected, not substituted, and a conflict is
-  a 409 rather than a half-merge.
+- `getPullRequest` to confirm it is the pull request you think it is.
+- `getPullRequestMergeability` **before** the decision: Bitbucket's own dry run of the merge —
+  approvals, builds, tasks, conflicts, your permission, the merge queue — with the blocking checks
+  first. A check that failed but is not `blocking` is a warning, not a stop.
+- `listPullRequestStatuses` when it is a build that blocks, for which one and its link. Bitbucket
+  merges over a failing build when the repository does not require it, and an empty list means
+  nothing has reported yet — which is not the same as passing.
+- `mergePullRequest` — not undoable from here. Omit `mergeStrategy` to take the repository's
+  default; a strategy it has disabled is rejected, not substituted, and a conflict is a 409 rather
+  than a half-merge.
+- **A `QUEUED` result is a merge under way, not a failure.** Bitbucket is merging in the background
+  or holding the pull request in its branch's merge queue, which can take as long as the queue's
+  builds. Never call `mergePullRequest` again to wait: `getPullRequest` shows `MERGED` once it lands,
+  and `getPullRequestMergeability` shows whether it is still queued and what holds it.
 - `declinePullRequest` closes without merging and cannot be reopened through this server. When the
   author is expected to keep working, `setPullRequestReviewStatus` with `CHANGES_REQUESTED` is the
   tool instead.

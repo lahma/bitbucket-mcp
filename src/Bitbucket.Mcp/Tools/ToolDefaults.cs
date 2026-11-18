@@ -216,7 +216,8 @@ internal static class ToolDefaults
     }
 
     /// <summary>
-    /// Normalises the <c>sourceBranch</c> filter of <c>listPullRequests</c>.
+    /// Normalises a branch filter: <c>listPullRequests</c>' <c>sourceBranch</c> and
+    /// <c>destinationBranch</c>, and <c>listPipelines</c>' <c>targetBranch</c>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -239,16 +240,18 @@ internal static class ToolDefaults
     /// answer to "does this branch already have a pull request?".
     /// </para>
     /// </remarks>
+    /// <param name="branch">The value the caller passed.</param>
+    /// <param name="parameter">The tool parameter it came from, for the messages.</param>
     /// <returns><see langword="null"/> when the caller did not filter by branch.</returns>
     /// <exception cref="McpException">The value cannot be expressed as a BBQL literal.</exception>
-    internal static string? ResolveBranchFilter(string? sourceBranch)
+    internal static string? ResolveBranchFilter(string? branch, string parameter)
     {
-        if (string.IsNullOrWhiteSpace(sourceBranch))
+        if (string.IsNullOrWhiteSpace(branch))
         {
             return null;
         }
 
-        var trimmed = sourceBranch.Trim();
+        var trimmed = branch.Trim();
 
         if (trimmed.StartsWith(RefsHeadsPrefix, StringComparison.Ordinal))
         {
@@ -258,17 +261,17 @@ internal static class ToolDefaults
         if (trimmed.Length == 0)
         {
             throw new McpException(
-                "sourceBranch is a branch name, not a ref: pass \"feature/clamp\", not " +
-                "\"refs/heads/\" on its own. Omit it to list every pull request.");
+                $"{parameter} is a branch name, not a ref: pass \"feature/clamp\", not " +
+                "\"refs/heads/\" on its own. Omit it to list them all.");
         }
 
         if (trimmed.AsSpan().IndexOfAny('"', '\\') >= 0)
         {
             throw new McpException(
-                $"sourceBranch cannot contain a double quote or a backslash; got '{trimmed}'. Bitbucket's " +
+                $"{parameter} cannot contain a double quote or a backslash; got '{trimmed}'. Bitbucket's " +
                 "query language delimits strings with double quotes and documents no way to escape one, so " +
-                "such a branch cannot be filtered on safely. List the pull requests without sourceBranch and " +
-                "match the branch in the results instead.");
+                $"such a branch cannot be filtered on safely. List without {parameter} and match the branch in " +
+                "the results instead.");
         }
 
         return trimmed;

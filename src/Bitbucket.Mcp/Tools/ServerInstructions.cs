@@ -22,7 +22,7 @@ internal static class ServerInstructions
         - Inline comments: prefer codeSnippet, the exact text of the line copied out of the diff, over line numbers. addPullRequestComment resolves it against the diff and reports ambiguity rather than guessing; omit path for a comment on the pull request itself.
         - Reviewers are Bitbucket account UUIDs in braced form ({...}), never names or emails. Read them from listDefaultReviewers, or from getPullRequest on an existing pull request.
         - Review state: setPullRequestReviewStatus takes APPROVED, CHANGES_REQUESTED or UNAPPROVED; UNAPPROVED clears both flags.
-        - createPullRequest, updatePullRequest, mergePullRequest and declinePullRequest take effect immediately on the real repository. Confirm the pull request with getPullRequest, and its builds with listPullRequestStatuses, before merging or declining it.
+        - createPullRequest, updatePullRequest, mergePullRequest and declinePullRequest take effect immediately on the real repository. Confirm the pull request with getPullRequest before merging or declining it, and what still blocks a merge with getPullRequestMergeability. A merge that comes back QUEUED is under way: never merge it again.
         - Builds: listPipelines (targetBranch = a pull request's sourceBranch) finds its runs; getPipeline names the step that failed and hands you its stepUuid and errorMessage — read that before any log; getPipelineStepLog reads the step's log, its end by default or pattern="..." to search it; listCodeInsights on a commit gives file-and-line findings and needs no extra scope.
         - First run needs a sign-in: `bitbucket-mcp login`, or BITBUCKET_ACCESS_TOKEN (or BITBUCKET_EMAIL + BITBUCKET_API_TOKEN) in this server's environment.
         """;

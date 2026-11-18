@@ -88,6 +88,25 @@ internal sealed record CommentResult
     public string? Url { get; init; }
 }
 
+/// <summary>A comment after <c>updatePullRequestComment</c> edited or deleted it.</summary>
+internal sealed record CommentChangeResult
+{
+    /// <summary>The comment that was changed.</summary>
+    public long CommentId { get; init; }
+
+    /// <summary>Whether it was deleted. Replies to a deleted comment stay in its thread.</summary>
+    public bool Deleted { get; init; }
+
+    /// <summary>The comment's text after an edit, as Markdown source.</summary>
+    public string? Content { get; init; }
+
+    /// <summary>When Bitbucket recorded the edit.</summary>
+    public DateTimeOffset? UpdatedOn { get; init; }
+
+    /// <summary>The comment's anchor on bitbucket.org, after an edit.</summary>
+    public string? Url { get; init; }
+}
+
 /// <summary>
 /// A comment thread's resolution state after <c>resolvePullRequestComment</c>.
 /// </summary>

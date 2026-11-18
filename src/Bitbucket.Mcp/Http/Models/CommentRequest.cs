@@ -3,9 +3,10 @@ using System.Text.Json.Serialization;
 namespace Bitbucket.Mcp.Http.Models;
 
 /// <summary>
-/// Body of <c>POST /pullrequests/{id}/comments</c>. A comment is general unless
-/// <see cref="Inline"/> is set, and a reply unless <see cref="Parent"/> is set; the two are
-/// independent — a reply to an inline comment carries both.
+/// Body of <c>POST /pullrequests/{id}/comments</c>, and with only <see cref="Content"/> set of the
+/// <c>PUT</c> that edits one. A comment is general unless <see cref="Inline"/> is set, and a reply
+/// unless <see cref="Parent"/> is set; the two are independent — a reply to an inline comment
+/// carries both.
 /// </summary>
 internal sealed record CommentRequest
 {

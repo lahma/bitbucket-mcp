@@ -3,6 +3,7 @@ using System.Reflection;
 using Bitbucket.Mcp.Configuration;
 using Bitbucket.Mcp.Http;
 
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 // NUnit has a DescriptionAttribute of its own; the one tools carry is the ComponentModel one.
@@ -47,6 +48,7 @@ public class ToolInventoryTests
         "getPullRequest",
         "getPullRequestComments",
         "getPullRequestDiff",
+        "getPullRequestMergeability",
         "listCodeInsights",
         "listDefaultReviewers",
         "listPipelines",
@@ -57,6 +59,7 @@ public class ToolInventoryTests
         "resolvePullRequestComment",
         "setPullRequestReviewStatus",
         "updatePullRequest",
+        "updatePullRequestComment",
         "updatePullRequestTask",
     ];
 
@@ -68,16 +71,17 @@ public class ToolInventoryTests
     [
         typeof(BitbucketApiClient),
         typeof(BitbucketMcpOptions),
+        typeof(IProgress<ProgressNotificationValue>),
         typeof(CancellationToken),
     ];
 
     [Test]
-    public void ExactlyTwentyToolsAreDeclaredAcrossTheThreeToolClasses()
+    public void ExactlyTwentyTwoToolsAreDeclaredAcrossTheThreeToolClasses()
     {
         Assert.That(ToolTestHost.ToolTypes.Count, Is.EqualTo(3));
         Assert.That(ToolTestHost.ToolMethods.Count, Is.EqualTo(ExpectedToolNames.Length));
         Assert.That(ToolTestHost.Tools.Count, Is.EqualTo(ExpectedToolNames.Length));
-        Assert.That(ExpectedToolNames.Length, Is.EqualTo(20));
+        Assert.That(ExpectedToolNames.Length, Is.EqualTo(22));
     }
 
     [Test]
@@ -95,9 +99,11 @@ public class ToolInventoryTests
     [TestCase("listDefaultReviewers", "List default reviewers")]
     [TestCase("listPullRequestStatuses", "List pull request statuses")]
     [TestCase("listPullRequestTasks", "List pull request tasks")]
+    [TestCase("getPullRequestMergeability", "Get pull request mergeability")]
     [TestCase("createPullRequest", "Create pull request")]
     [TestCase("updatePullRequest", "Update pull request")]
     [TestCase("addPullRequestComment", "Add pull request comment")]
+    [TestCase("updatePullRequestComment", "Edit or delete pull request comment")]
     [TestCase("resolvePullRequestComment", "Resolve pull request comment")]
     [TestCase("addPullRequestTask", "Add pull request task")]
     [TestCase("updatePullRequestTask", "Update pull request task")]
@@ -118,7 +124,7 @@ public class ToolInventoryTests
 
     /// <summary>
     /// The annotation table from AGENTS.md, verbatim. A <see langword="null"/> destructive hint means
-    /// the annotation is absent, which is what the seven read-only tools want: <c>readOnlyHint</c>
+    /// the annotation is absent, which is what the read-only tools want: <c>readOnlyHint</c>
     /// already says they change nothing, and a destructive hint on a read tool is noise.
     /// </summary>
     [TestCase("listPullRequests", true, null, true, true)]
@@ -128,6 +134,7 @@ public class ToolInventoryTests
     [TestCase("listDefaultReviewers", true, null, true, true)]
     [TestCase("listPullRequestStatuses", true, null, true, true)]
     [TestCase("listPullRequestTasks", true, null, true, true)]
+    [TestCase("getPullRequestMergeability", true, null, true, true)]
     [TestCase("listPipelines", true, null, true, true)]
     [TestCase("getPipeline", true, null, true, true)]
     [TestCase("getPipelineStepLog", true, null, true, true)]
@@ -139,6 +146,7 @@ public class ToolInventoryTests
     [TestCase("updatePullRequestTask", false, false, true, true)]
     [TestCase("setPullRequestReviewStatus", false, false, true, true)]
     [TestCase("updatePullRequest", false, true, false, true)]
+    [TestCase("updatePullRequestComment", false, true, true, true)]
     [TestCase("mergePullRequest", false, true, false, true)]
     [TestCase("declinePullRequest", false, true, false, true)]
     public void AnnotationsMatchThePlanTable(

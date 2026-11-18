@@ -78,7 +78,7 @@ internal sealed class PipelineReadTools
         var slug = ToolDefaults.RequireRepository(repository);
         var resolvedWorkspace = ToolDefaults.ResolveWorkspace(workspace, options);
         var resolvedStatus = ToolDefaults.ResolvePipelineStatus(status);
-        var branch = ToolDefaults.ResolveBranchFilter(targetBranch);
+        var branch = ToolDefaults.ResolveBranchFilter(targetBranch, nameof(targetBranch));
         var resolvedCommit = string.IsNullOrWhiteSpace(commit) ? null : ToolDefaults.RequireCommit(commit);
 
         var context = new ToolCallContext(

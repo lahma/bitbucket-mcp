@@ -25,7 +25,7 @@ namespace Bitbucket.Mcp.Tests.Tools;
 public class ToolSchemaTests
 {
     /// <summary>Parameter names the SDK must never expose: they are bound from DI or the protocol.</summary>
-    private static readonly string[] NeverInSchema = ["client", "options", "cancellationToken"];
+    private static readonly string[] NeverInSchema = ["client", "options", "progress", "cancellationToken"];
 
     /// <summary>
     /// D6, asserted where it matters: the schemas above are only the shipped ones if the options
@@ -44,7 +44,7 @@ public class ToolSchemaTests
 
     [TestCase(
         "listPullRequests",
-        "repository,workspace,state,author,sourceBranch,pageSize,cursor",
+        "repository,workspace,state,author,sourceBranch,reviewer,destinationBranch,pageSize,cursor",
         "repository")]
     [TestCase(
         "listPipelines",
@@ -75,6 +75,10 @@ public class ToolSchemaTests
         "repository,pullRequestId,workspace,pageSize,cursor",
         "repository,pullRequestId")]
     [TestCase(
+        "updatePullRequestComment",
+        "repository,pullRequestId,commentId,content,delete,workspace",
+        "repository,pullRequestId,commentId")]
+    [TestCase(
         "resolvePullRequestComment",
         "repository,pullRequestId,commentId,resolved,workspace",
         "repository,pullRequestId,commentId,resolved")]
@@ -96,7 +100,11 @@ public class ToolSchemaTests
         "repository,pullRequestId")]
     [TestCase(
         "getPullRequestComments",
-        "repository,pullRequestId,workspace,pageSize,cursor",
+        "repository,pullRequestId,workspace,unresolvedOnly,pageSize,cursor",
+        "repository,pullRequestId")]
+    [TestCase(
+        "getPullRequestMergeability",
+        "repository,pullRequestId,workspace",
         "repository,pullRequestId")]
     [TestCase(
         "createPullRequest",

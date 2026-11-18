@@ -122,9 +122,11 @@ before every comment.
 | `listDefaultReviewers` | pr read | true | — | true | true |
 | `listPullRequestStatuses` | pr read | true | — | true | true |
 | `listPullRequestTasks` | pr read | true | — | true | true |
+| `getPullRequestMergeability` | pr read | true | — | true | true |
 | `createPullRequest` | pr write | false | **false** | false | true |
 | `updatePullRequest` | pr write | false | true | false | true |
 | `addPullRequestComment` | pr write | false | **false** | false | true |
+| `updatePullRequestComment` | pr write | false | true | true | true |
 | `resolvePullRequestComment` | pr write | false | **false** | true | true |
 | `addPullRequestTask` | pr write | false | **false** | false | true |
 | `updatePullRequestTask` | pr write | false | **false** | true | true |
@@ -421,7 +423,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
   directions: a name no tool answers to fails, and so does a tool the skill never mentions. Tool
   *parameter* names are excluded by reflection, not by a list, so `mergeStrategy` does not read as a
   missing tool. Nothing else loads that file, so without this it would keep advertising an older
-  surface — the inventory grew from ten tools to sixteen during development and to twenty since, and a skill written
+  surface — the inventory grew from ten tools to sixteen during development and to twenty-two since, and a skill written
   before that would still have read as correct. It is therefore a **fourth** place a new tool has to
   be added, after the *Tool table*, `ToolInventoryTests` and `Build.cs`. The frontmatter is checked
   too: `name` must equal the directory name and satisfy the Agent Skills spec's charset, and
@@ -446,7 +448,7 @@ reflection or by scanning the source tree. Do not delete one to make a change pa
 
 `SmokeTest` is the end-to-end check the unit tests cannot be: it publishes the Native AOT binary,
 spawns it, and drives a real `initialize` / `notifications/initialized` / `tools/list` exchange
-over stdio, asserting `serverInfo.name` and all twenty tool names. CI runs `Test` and `SmokeTest`
+over stdio, asserting `serverInfo.name` and all twenty-two tool names. CI runs `Test` and `SmokeTest`
 on every push and pull request.
 
 ## Release engineering

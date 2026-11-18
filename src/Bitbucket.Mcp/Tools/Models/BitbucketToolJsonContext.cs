@@ -49,6 +49,7 @@ namespace Bitbucket.Mcp.Tools.Models;
 [JsonSerializable(typeof(CommentListResult))]
 [JsonSerializable(typeof(CommentResult))]
 [JsonSerializable(typeof(CommentResolutionResult))]
+[JsonSerializable(typeof(CommentChangeResult))]
 
 // Default reviewer results.
 [JsonSerializable(typeof(DefaultReviewerSummary))]
@@ -66,6 +67,8 @@ namespace Bitbucket.Mcp.Tools.Models;
 [JsonSerializable(typeof(ReviewStatusResult))]
 [JsonSerializable(typeof(MergeResult))]
 [JsonSerializable(typeof(DeclineResult))]
+[JsonSerializable(typeof(PullRequestMergeabilityResult))]
+[JsonSerializable(typeof(MergeabilityCheck))]
 
 // Pipeline and build-diagnosis results.
 [JsonSerializable(typeof(PipelineSummary))]

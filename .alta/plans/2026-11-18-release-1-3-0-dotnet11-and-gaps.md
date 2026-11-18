@@ -287,18 +287,25 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 
 **Phase B: tool surface** (tests in NUnit)
 
-- [ ] 12. Merge queues (§5):
+> Done, with the deviations that having no Bitbucket credentials on the build machine forced:
+> - Step 13's fixture is synthetic, shaped after the OpenAPI schema, and the live capture is still owed (see *How it is verified*).
+> - Step 15 filters `unresolvedOnly` client-side: a BBQL `resolution` filter could not be tried. `deleted = false` is server-side, still behind the mapper's backstop, and on the live-check list.
+> - **Step 17 is dropped from 1.3.0.** The test-report endpoints document no response body and none could be captured.
+> - `listPipelines`' `targetBranch` errors used to name `sourceBranch` and "pull requests"; the shared branch filter now takes the parameter's name.
+> - `mergePullRequest` disposes the 202 before polling, so the unread response does not hold a connection for the wait.
+
+- [x] 12. Merge queues (§5):
   - `BitbucketApiClient.MergeAsync` returns the PR on `200`, or the task id on `202`.
   - New `GetMergeTaskStatusAsync` plus `MergeTaskStatusDto` (extend the existing one) with `merge_result` and `queued_pullrequest`.
   - In `mergePullRequest`, poll with an internal budget and interval (tests pass zero, so no fake-clock package is needed) and report progress.
   - Remove `CreateQueuedMergeExceptionAsync`, the `202 => Queued` branch in `ToolErrors` and its README troubleshooting entry, since nothing produces them any more.
   - Tests: 202 → SUCCESS, 202 → still PENDING (`QUEUED` result), 202 → error body, and a `Location` with a foreign host or path (refused).
-- [ ] 13. `getPullRequestMergeability` (§6): `MergeabilityCheckDto` with the per-type fields (`check.kind`, `reason`, `queued`, `state`), a `ResultMapper` method, the tool in `PullRequestReadTools` (ReadOnly, Idempotent, OpenWorld), and a fixture-backed test. An unknown `type` passes through as-is rather than failing the call. Capture one live response into `Fixtures/` first.
-- [ ] 14. `updatePullRequestComment` (§7) in `PullRequestWriteTools` (Destructive=true, Idempotent=true). Refuse both or neither of `content`/`delete`. Tests for edit, delete and the arity guard.
-- [ ] 15. `getPullRequestComments`: add `q=deleted=false` in `GetCommentsAsync` and an `unresolvedOnly` parameter. Try `resolution=null` in BBQL against a live repository first; if Bitbucket refuses it, filter client-side and say so in the description. Keep the `ResultMapper.Comments` deleted check as a backstop and say why in its comment.
-- [ ] 16. `listPullRequests`: `reviewer` and `destinationBranch` through the existing BBQL composer (`BitbucketApiClient.cs` around line 1019) and `ToolDefaults.ResolveBranchFilter`'s refusal rule for quotes and backslashes.
+- [x] 13. `getPullRequestMergeability` (§6): `MergeabilityCheckDto` with the per-type fields (`check.kind`, `reason`, `queued`, `state`), a `ResultMapper` method, the tool in `PullRequestReadTools` (ReadOnly, Idempotent, OpenWorld), and a fixture-backed test. An unknown `type` passes through as-is rather than failing the call. Capture one live response into `Fixtures/` first.
+- [x] 14. `updatePullRequestComment` (§7) in `PullRequestWriteTools` (Destructive=true, Idempotent=true). Refuse both or neither of `content`/`delete`. Tests for edit, delete and the arity guard.
+- [x] 15. `getPullRequestComments`: add `q=deleted=false` in `GetCommentsAsync` and an `unresolvedOnly` parameter. Try `resolution=null` in BBQL against a live repository first; if Bitbucket refuses it, filter client-side and say so in the description. Keep the `ResultMapper.Comments` deleted check as a backstop and say why in its comment.
+- [x] 16. `listPullRequests`: `reviewer` and `destinationBranch` through the existing BBQL composer (`BitbucketApiClient.cs` around line 1019) and `ToolDefaults.ResolveBranchFilter`'s refusal rule for quotes and backslashes.
 - [ ] 17. Test reports (§8): capture live responses into `Fixtures/` first. If the shape is usable, add `includeFailedTests` to `getPipeline`, a field set that includes `next` (`FieldSetTests` enforces it), and tests. While in `FieldSets.cs`, move the misplaced `Task` doc comment that sits above `Pipelines` back to `Task`. If the shape is not usable, drop the step and record why here.
-- [ ] 18. Inventory in its six places for the two new tools:
+- [x] 18. Inventory in its six places for the two new tools:
   - the AGENTS.md *Tool table*;
   - `ToolInventoryTests` (names, counts, annotation rows);
   - `Build.cs` `ExpectedToolNames`;

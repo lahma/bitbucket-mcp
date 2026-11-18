@@ -52,8 +52,9 @@ internal sealed class PullRequestReadTools
         "Lists a repository's pull requests, most recently updated first. Returns a summary per pull request " +
         "(id, title, state, author, branches, url) — call getPullRequest for the description, reviewers and " +
         "approvals. Defaults to open pull requests only; pass state to widen that. Pass sourceBranch to ask " +
-        "whether a branch already has a pull request, which is the check to make before createPullRequest. " +
-        "Results are paginated: pass the returned nextCursor back as cursor for the next page.")]
+        "whether a branch already has a pull request, which is the check to make before createPullRequest; " +
+        "reviewer for the pull requests waiting on someone's review; destinationBranch for the ones into a " +
+        "branch. Results are paginated: pass the returned nextCursor back as cursor for the next page.")]
     public static async Task<PullRequestListResult> ListPullRequestsAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -67,6 +68,10 @@ internal sealed class PullRequestReadTools
         string? author = null,
         [Description("Restrict to pull requests opened from this branch, without any refs/heads/ prefix and spelled exactly. Combined with state, so pass state=\"ALL\" to find a merged or declined one too.")]
         string? sourceBranch = null,
+        [Description("Restrict to pull requests with this reviewer: a Bitbucket account UUID in braced form ({...}), or a nickname. Omit for any reviewer.")]
+        string? reviewer = null,
+        [Description("Restrict to pull requests into this branch, without any refs/heads/ prefix and spelled exactly — for example main. Omit for any destination.")]
+        string? destinationBranch = null,
         [Description("Pull requests per page, clamped to 1-50. Omit for Bitbucket's default.")]
         int? pageSize = null,
         [Description("Opaque cursor from a previous response's nextCursor — pass it back verbatim. Omit to start from the first page. When set, every other filter is ignored because the cursor already encodes them.")]
@@ -78,7 +83,8 @@ internal sealed class PullRequestReadTools
         var slug = ToolDefaults.RequireRepository(repository);
         var resolvedWorkspace = ToolDefaults.ResolveWorkspace(workspace, options);
         var states = ToolDefaults.ResolvePullRequestStates(state);
-        var branch = ToolDefaults.ResolveBranchFilter(sourceBranch);
+        var branch = ToolDefaults.ResolveBranchFilter(sourceBranch, nameof(sourceBranch));
+        var destination = ToolDefaults.ResolveBranchFilter(destinationBranch, nameof(destinationBranch));
 
         var context = new ToolCallContext("listPullRequests", resolvedWorkspace, slug);
 
@@ -90,6 +96,8 @@ internal sealed class PullRequestReadTools
                     states,
                     author,
                     branch,
+                    reviewer,
+                    destination,
                     query: null,
                     sort: "-updated_on",
                     ToolDefaults.ClampPageSize(pageSize),
@@ -244,9 +252,10 @@ internal sealed class PullRequestReadTools
         UseStructuredContent = true)]
     [Description(
         "Lists a pull request's comments — both general ones and the inline ones anchored to a file and line " +
-        "— oldest first, with deleted comments filtered out. Each comment's id is what addPullRequestComment " +
-        "takes as parentCommentId to reply. Results are paginated: pass the returned nextCursor back as " +
-        "cursor for the next page.")]
+        "— oldest first, with deleted comments filtered out. Pass unresolvedOnly=true for only the threads " +
+        "still open, the review comments waiting for an answer. Each comment's id is what addPullRequestComment " +
+        "takes as parentCommentId to reply, and what updatePullRequestComment and resolvePullRequestComment " +
+        "take as commentId. Results are paginated: pass the returned nextCursor back as cursor for the next page.")]
     public static async Task<CommentListResult> GetPullRequestCommentsAsync(
         BitbucketApiClient client,
         BitbucketMcpOptions options,
@@ -256,6 +265,8 @@ internal sealed class PullRequestReadTools
         int pullRequestId,
         [Description("Workspace slug — the first URL segment of bitbucket.org/{workspace}/{repository}, not the workspace's display name. Optional when BITBUCKET_DEFAULT_WORKSPACE is set.")]
         string? workspace = null,
+        [Description("Leave out threads already marked resolved — their top-level comment and the replies under it. The filter applies per page, so a page can hold fewer comments than pageSize; a reply whose thread starts on an earlier page is kept. Omit for every comment.")]
+        bool? unresolvedOnly = null,
         [Description("Comments per page, clamped to 1-50. Omit for Bitbucket's default.")]
         int? pageSize = null,
         [Description("Opaque cursor from a previous response's nextCursor — pass it back verbatim. Omit to start from the first page.")]
@@ -281,7 +292,7 @@ internal sealed class PullRequestReadTools
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return ResultMapper.Comments(page);
+            return ResultMapper.Comments(page, unresolvedOnly == true);
         }).ConfigureAwait(false);
     }
 
@@ -432,6 +443,48 @@ internal sealed class PullRequestReadTools
                 .ConfigureAwait(false);
 
             return ResultMapper.Tasks(page);
+        }).ConfigureAwait(false);
+    }
+
+    [McpServerTool(
+        Name = "getPullRequestMergeability",
+        Title = "Get pull request mergeability",
+        ReadOnly = true,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Asks Bitbucket whether a pull request can be merged right now and what stops it: its state, your " +
+        "permission to merge, git conflicts, every configured merge check (required approvals, successful " +
+        "builds, resolved tasks, and so on) and the destination branch's merge queue. Each check says whether " +
+        "it is blocking; blocking ones come first. Call it once before mergePullRequest, and to see whether a " +
+        "QUEUED merge is still in the queue. mergeable=true is not a guarantee: Bitbucket leaves out conditions " +
+        "it can only find by attempting the merge.")]
+    public static async Task<PullRequestMergeabilityResult> GetPullRequestMergeabilityAsync(
+        BitbucketApiClient client,
+        BitbucketMcpOptions options,
+        [Description("Repository slug — the second URL segment of bitbucket.org/{workspace}/{repository}, not the repository's display name.")]
+        string repository,
+        [Description("The pull request number, as it appears in the pull request's URL.")]
+        int pullRequestId,
+        [Description("Workspace slug — the first URL segment of bitbucket.org/{workspace}/{repository}, not the workspace's display name. Optional when BITBUCKET_DEFAULT_WORKSPACE is set.")]
+        string? workspace = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        var slug = ToolDefaults.RequireRepository(repository);
+        var resolvedWorkspace = ToolDefaults.ResolveWorkspace(workspace, options);
+        var id = ToolDefaults.RequirePullRequestId(pullRequestId);
+
+        var context = new ToolCallContext("getPullRequestMergeability", resolvedWorkspace, slug, id);
+
+        return await ToolErrors.ExecuteAsync(context, async () =>
+        {
+            var checks = await client.GetMergeabilityChecksAsync(resolvedWorkspace, slug, id, cancellationToken)
+                .ConfigureAwait(false);
+
+            return ResultMapper.Mergeability(checks);
         }).ConfigureAwait(false);
     }
 

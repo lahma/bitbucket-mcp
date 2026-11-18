@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 
 using Bitbucket.Mcp.Http;
+using Bitbucket.Mcp.Tests.Http;
 using Bitbucket.Mcp.Tools;
 using Bitbucket.Mcp.Tools.Models;
 
@@ -1186,6 +1187,87 @@ public class ToolBehaviourTests
         Assert.That(result.MergeCommitHash, Is.EqualTo("abc123def456"));
     }
 
+    /// <summary>
+    /// A merge into a branch with a merge queue answers 202 and can stay queued for as long as the
+    /// queue's builds take. That comes back as QUEUED with what to do next — never as a failure, and
+    /// never as an invitation to merge again.
+    /// </summary>
+    [Test]
+    public async Task AMergeThatHasNotLandedIsReportedAsQueuedRatherThanAsAFailure()
+    {
+        using var handler = QueuedMergeHandler();
+        using var client = ToolTestHost.CreateClient(handler, timeProvider: new ManualTimeProvider());
+
+        var result = await PullRequestWriteTools.MergePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(result.State, Is.EqualTo("QUEUED"));
+        Assert.That(result.TaskId, Is.EqualTo("task-1"));
+        Assert.That(result.InMergeQueue, Is.True);
+        Assert.That(result.MergeCommitHash, Is.Null);
+        Assert.That(result.Next, Does.Contain("merge queue"));
+        Assert.That(result.Next, Does.Contain("Do not call mergePullRequest again"));
+        Assert.That(result.Next, Does.Contain("getPullRequestMergeability"));
+    }
+
+    /// <summary>While it waits on a merge task, the tool tells the client how far through the wait it is.</summary>
+    [Test]
+    public async Task WaitingOnAMergeTaskReportsProgress()
+    {
+        using var handler = QueuedMergeHandler();
+        using var client = ToolTestHost.CreateClient(handler, timeProvider: new ManualTimeProvider());
+
+        var progress = new RecordingProgress();
+
+        _ = await PullRequestWriteTools.MergePullRequestAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            progress: progress,
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        var attempts = BitbucketApiClient.MergeTaskPollDelays.Length;
+
+        Assert.That(progress.Values.Select(value => value.Progress), Is.EqualTo(Enumerable.Range(1, attempts).Select(n => (float) n)));
+        Assert.That(progress.Values.Select(value => value.Total), Is.All.EqualTo((float) attempts));
+        Assert.That(progress.Values[0].Message, Does.Contain("merge queue"));
+    }
+
+    /// <summary>A 202 for pull request 42 whose task stays queued for the whole wait.</summary>
+    private static StubHttpMessageHandler QueuedMergeHandler()
+    {
+        var handler = new StubHttpMessageHandler();
+
+        handler.Enqueue(_ =>
+        {
+            var response = StubHttpMessageHandler.CreateResponse(HttpStatusCode.Accepted, """{"task_status":"PENDING"}""");
+            response.Headers.Location = new Uri($"https://api.bitbucket.org/2.0/repositories/{Workspace}/{Repository}/pullrequests/42/merge/task-status/task-1");
+            return response;
+        });
+
+        foreach (var _ in BitbucketApiClient.MergeTaskPollDelays)
+        {
+            handler.EnqueueJson("""{"task_status":"PENDING","queued_pullrequest":{"type":"queued_pullrequest"}}""");
+        }
+
+        return handler;
+    }
+
+    /// <summary>Records progress synchronously, unlike <see cref="Progress{T}"/>, which posts to the thread pool.</summary>
+    private sealed class RecordingProgress : IProgress<ProgressNotificationValue>
+    {
+        internal List<ProgressNotificationValue> Values { get; } = [];
+
+        public void Report(ProgressNotificationValue value) => Values.Add(value);
+    }
+
     [Test]
     public async Task DecliningReportsTheStateAndTheStoredReason()
     {
@@ -1979,6 +2061,231 @@ public class ToolBehaviourTests
                 TestContext.CurrentContext.CancellationToken));
 
         Assert.That(exception.Message, Does.Contain("commentId must be 1 or greater"));
+        Assert.That(handler.Requests, Is.Empty);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Mergeability, comment edits and filters
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>The fixture's checks after the blocking one, in Bitbucket's order: by name, else by type.</summary>
+    private static readonly string[] NonBlockingChecksInOrder =
+    [
+        "pullrequest_state_check",
+        "current_user_permission_check",
+        "git_mergeability_check",
+        "minimum_successful_builds",
+        "License scan",
+    ];
+
+    [Test]
+    public async Task MergeabilityPutsTheBlockingChecksFirstAndSaysWhatEachFound()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(HttpFixtures.Read("http-mergeability-checks.json"));
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.GetPullRequestMergeabilityAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(Expect.Single(handler.Requests).Uri!.AbsolutePath, Does.EndWith("/pullrequests/42/mergeability/checks"));
+        Assert.That(result.Mergeable, Is.False);
+
+        var blocking = result.Checks[0];
+        Assert.That(blocking.Type, Is.EqualTo("standard_merge_check"));
+        Assert.That(blocking.Name, Is.EqualTo("minimum_approvals"));
+        Assert.That(blocking.Status, Is.EqualTo("FAILED"));
+        Assert.That(blocking.Blocking, Is.True);
+        Assert.That(blocking.Detail, Does.StartWith("requires {"));
+        Assert.That(blocking.Detail, Does.Contain("\"approval_count\": 1"));
+
+        // The rest keep Bitbucket's order, and a failed check that does not block stays among them.
+        Assert.That(result.Checks.Skip(1).Select(check => check.Name ?? check.Type), Is.EqualTo(NonBlockingChecksInOrder));
+
+        Assert.That(result.Checks[1].Detail, Is.EqualTo("pull request is OPEN"));
+        Assert.That(result.Checks[2].Detail, Is.Null);
+        Assert.That(result.Checks[3].Detail, Is.EqualTo("clean"));
+        Assert.That(result.Checks[4].Blocking, Is.False);
+        Assert.That(result.Checks[5].Detail, Is.EqualTo("No new licenses."));
+    }
+
+    /// <summary>A check Bitbucket could not evaluate is not a pass, even though nothing is blocking.</summary>
+    [TestCase("PASSED", true)]
+    [TestCase("UNKNOWN", false)]
+    public async Task MergeableNeedsEveryCheckEvaluatedAndNoneBlocking(string gitStatus, bool mergeable)
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson($$"""{"values":[{"type":"git_mergeability_check","status":"{{gitStatus}}","required":true,"blocking":false}]}""");
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.GetPullRequestMergeabilityAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(result.Mergeable, Is.EqualTo(mergeable));
+    }
+
+    [Test]
+    public async Task EditingACommentReplacesItsText()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.CreatedComment);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestCommentAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            1001,
+            content: "Clamp the lower bound only.",
+            workspace: Workspace,
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        var request = Expect.Single(handler.Requests);
+        Assert.That(request.Method, Is.EqualTo(HttpMethod.Put));
+        Assert.That(request.Uri!.AbsolutePath, Does.EndWith("/pullrequests/42/comments/1001"));
+        Assert.That(request.Body, Does.Contain("\"raw\":\"Clamp the lower bound only.\""));
+
+        Assert.That(result.Deleted, Is.False);
+        Assert.That(result.Content, Is.Not.Null);
+        Assert.That(result.Url, Is.EqualTo(ToolFixtures.CommentWebUrl));
+    }
+
+    [Test]
+    public async Task DeletingACommentReportsItDeleted()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.NoContent);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestWriteTools.UpdatePullRequestCommentAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            1001,
+            delete: true,
+            workspace: Workspace,
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(Expect.Single(handler.Requests).Method, Is.EqualTo(HttpMethod.Delete));
+        Assert.That(result.CommentId, Is.EqualTo(1001));
+        Assert.That(result.Deleted, Is.True);
+        Assert.That(result.Content, Is.Null);
+    }
+
+    /// <summary>An edit and a deletion are different changes, and asking for neither is not a change.</summary>
+    [TestCase(null, null, "Nothing to change")]
+    [TestCase("   ", false, "Nothing to change")]
+    [TestCase("New text", true, "not both")]
+    public async Task ACommentChangeNeedsExactlyOneOfContentAndDelete(string? content, bool? delete, string message)
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Expect.ThrowsAsync<McpException>(() =>
+            PullRequestWriteTools.UpdatePullRequestCommentAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                42,
+                1001,
+                content,
+                delete,
+                Workspace,
+                TestContext.CurrentContext.CancellationToken));
+
+        Assert.That(exception.Message, Does.Contain(message));
+        Assert.That(handler.Requests, Is.Empty);
+    }
+
+    /// <summary>
+    /// Only a thread's top-level comment carries its resolution, so the replies under a resolved one
+    /// go with it. A reply whose thread started on an earlier page cannot be placed, and is kept.
+    /// </summary>
+    [TestCase(false, new long[] { 2001, 2002, 2003, 2004, 2005 })]
+    [TestCase(true, new long[] { 2003, 2004, 2005 })]
+    public async Task UnresolvedOnlyLeavesOutResolvedThreadsWithTheirReplies(bool unresolvedOnly, long[] expectedIds)
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson("""
+            {
+              "values": [
+                { "id": 2001, "deleted": false, "content": { "raw": "Rename this." }, "resolution": { "created_on": "2026-08-01T12:00:00+00:00" } },
+                { "id": 2002, "deleted": false, "content": { "raw": "Done." }, "parent": { "id": 2001 } },
+                { "id": 2003, "deleted": false, "content": { "raw": "Clamp the upper bound too?" } },
+                { "id": 2004, "deleted": false, "content": { "raw": "Not yet." }, "parent": { "id": 2003 } },
+                { "id": 2005, "deleted": false, "content": { "raw": "Still open?" }, "parent": { "id": 1999 } }
+              ]
+            }
+            """);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var result = await PullRequestReadTools.GetPullRequestCommentsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            42,
+            Workspace,
+            unresolvedOnly: unresolvedOnly,
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        Assert.That(result.Comments.Select(comment => comment.Id), Is.EqualTo(expectedIds));
+    }
+
+    [Test]
+    public async Task ReviewerAndDestinationBranchNarrowTheList()
+    {
+        using var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(ToolFixtures.PullRequestPage);
+
+        using var client = ToolTestHost.CreateClient(handler);
+
+        _ = await PullRequestReadTools.ListPullRequestsAsync(
+            client,
+            ToolTestHost.CreateOptions(),
+            Repository,
+            Workspace,
+            reviewer: "{11111111-2222-3333-4444-555555555555}",
+            destinationBranch: "refs/heads/main",
+            cancellationToken: TestContext.CurrentContext.CancellationToken);
+
+        var query = Single(handler, "q");
+        Assert.That(query, Does.Contain("reviewers.uuid = \"{11111111-2222-3333-4444-555555555555}\""));
+        Assert.That(query, Does.Contain("destination.branch.name = \"main\""));
+    }
+
+    [Test]
+    public async Task ADestinationBranchWithAQuoteIsRefusedByItsOwnName()
+    {
+        using var handler = new StubHttpMessageHandler();
+        using var client = ToolTestHost.CreateClient(handler);
+
+        var exception = await Expect.ThrowsAsync<McpException>(() =>
+            PullRequestReadTools.ListPullRequestsAsync(
+                client,
+                ToolTestHost.CreateOptions(),
+                Repository,
+                Workspace,
+                destinationBranch: "ma\"in",
+                cancellationToken: TestContext.CurrentContext.CancellationToken));
+
+        Assert.That(exception.Message, Does.StartWith("destinationBranch cannot contain a double quote"));
         Assert.That(handler.Requests, Is.Empty);
     }
 
