@@ -30,6 +30,7 @@
         "Pack",
         "Publish",
         "PublishAot",
+        "PublishMcpRegistry",
         "Restore",
         "SmokeTest",
         "Test"

@@ -1,3 +1,11 @@
+# 1.3.2
+
+- Listed in the official [MCP Registry](https://registry.modelcontextprotocol.io) as
+  `io.github.lahma/bitbucket-mcp` from this version on. Each release now posts `.mcp/server.json`
+  there right after the nuget.org push, logged in with the release workflow's GitHub OIDC token, so
+  clients and catalogues that read the registry find the server and the `dnx` command that runs it.
+  The server itself is unchanged from 1.3.1.
+
 # 1.3.1
 
 - A tool call that names an argument the tool does not take is refused, saying which, instead of

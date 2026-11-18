@@ -37,7 +37,7 @@ using Fallout.Components;
     FetchDepth = 0,
     OnPushTags = ["v*.*.*"],
     CacheKeyFiles = [],
-    InvokedTargets = [nameof(ICompile.Compile), nameof(Test), nameof(Pack), nameof(Publish)],
+    InvokedTargets = [nameof(ICompile.Compile), nameof(Test), nameof(Pack), nameof(Publish), nameof(PublishMcpRegistry)],
     PublishArtifacts = true,
     // The nuget.org profile name that created the trusted publishing policy. Public information and
     // deliberately not a secret - it goes verbatim into the token-exchange request body, and a

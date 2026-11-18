@@ -84,7 +84,7 @@ The Linux binaries need glibc 2.34 or newer — Ubuntu 22.04, Debian 12, RHEL 9 
 successors. The release checks that floor on every build, so it cannot move without a release note.
 
 ```bash
-tar -xzf bitbucket-mcp-1.3.1-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.3.2-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -108,7 +108,7 @@ The same server is published to nuget.org as
 there is nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.3.1 --yes status
+dnx bitbucket-mcp@1.3.2 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -121,7 +121,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.3.1", "--yes"],
+      "args": ["bitbucket-mcp@1.3.2", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -131,7 +131,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.3.1`) rather than floating: an MCP server is something an agent runs on your
+Pin the version (`@1.3.2`) rather than floating: an MCP server is something an agent runs on your
 behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
 needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
 missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run
@@ -140,7 +140,10 @@ also has to download the package.
 Releases are pushed to nuget.org by `.github/workflows/publish.yml`, a workflow only a `v*.*.*` tag
 can start, using [trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing):
 the workflow exchanges its GitHub OIDC token for an API key that lives minutes. There is no NuGet
-API key stored in this repository, so there is none to leak.
+API key stored in this repository, so there is none to leak. The same workflow then lists the version
+in the official [MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.lahma/bitbucket-mcp`, logged in the same way, so clients and catalogues that read the
+registry find the server and the `dnx` command that runs it.
 
 ## Authentication
 
