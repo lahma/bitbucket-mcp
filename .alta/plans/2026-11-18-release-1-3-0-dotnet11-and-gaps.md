@@ -317,22 +317,22 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 
 **Phase C: release**
 
-- [ ] 19. Registry-ready manifest (§9): update `.mcp/server.json` (`$schema`, a description of at most 100 characters, `registryBaseUrl`) and add the `mcp-name` comment to `README.md`. Extend `McpServerManifestTests`:
+- [x] 19. Registry-ready manifest (§9): update `.mcp/server.json` (`$schema`, a description of at most 100 characters, `registryBaseUrl`) and add the `mcp-name` comment to `README.md`. Extend `McpServerManifestTests`:
   - `description.Length <= 100`;
   - `registryBaseUrl` is exactly the NuGet index URL;
   - `$schema` names the 2025-12-11 schema;
   - `README.md` contains `mcp-name: ` followed by the manifest's `name`.
 
   The sonarqube-mcp repository makes the same change in its next release; keep the two in the same shape.
-- [ ] 20. `CHANGELOG.md` `# 1.3.0`, and the version in `.mcp/server.json` (both fields), `.claude-plugin/plugin.json` with its `dnx` pin, and the `VersionPrefix` fallback in `Directory.Build.props`. The manifest tests enforce all of these. In the changelog, add lines on the Linux glibc 2.34 floor, merge-queue behavior, and the move to NUnit on MTP (for contributors).
+- [x] 20. `CHANGELOG.md` `# 1.3.0`, and the version in `.mcp/server.json` (both fields), `.claude-plugin/plugin.json` with its `dnx` pin, and the `VersionPrefix` fallback in `Directory.Build.props`. The manifest tests enforce all of these. In the changelog, add lines on the Linux glibc 2.34 floor, merge-queue behavior, and the move to NUnit on MTP (for contributors).
 - [ ] 21. Run `release.yml` by `workflow_dispatch` on the branch. All five legs must be green, the Linux legs must print `requires GLIBC_2.34` or lower, and the win-x64 zip, now built with SharpCompress, must download, extract and run `bitbucket-mcp status`.
 
 ## How it is verified
 
-- [ ] `.\build.ps1 Test` and `.\build.ps1 SmokeTest` are green locally, and `SmokeTest` lists all 22 tools.
-- [ ] The converted suite discovers at least the 686 baseline cases, plus the new tests from Phase B.
+- [x] `.\build.ps1 Test` and `.\build.ps1 SmokeTest` are green locally, and `SmokeTest` lists all 22 tools (`tools/list` 57,910 bytes, from 52,789).
+- [x] The converted suite discovers at least the 686 baseline cases, plus the new tests from Phase B (722: 721 pass, 1 platform skip).
 - [x] `GITHUB_ACTIONS=true dotnet fallout Test` is green with no `NuGet.Frameworks` reference, and a deliberately failing assert produces a `::error` annotation.
-- [ ] `dotnet list build/_build.csproj package --vulnerable --include-transitive` reports nothing.
+- [x] `dotnet list build/_build.csproj package --vulnerable --include-transitive` reports nothing.
 - [ ] Live, against a real workspace:
   - merge into a branch with a merge queue: progress appears, and the call returns `QUEUED` or `MERGED`;
   - `getPullRequestMergeability` on a PR missing an approval shows that check blocking;
@@ -340,7 +340,7 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
   - `unresolvedOnly` on a PR with mixed threads;
   - a failed step with JUnit output, for step 17.
 - [ ] The release dry run (step 21) is green on all five runners.
-- [ ] The packed `artifacts/packages/bitbucket-mcp.1.3.0.nupkg` contains `README.md` with the `mcp-name` line, and `.mcp/server.json` with the new fields.
+- [x] The packed `artifacts/packages/bitbucket-mcp.1.3.0.nupkg` contains `README.md` with the `mcp-name` line, and `.mcp/server.json` with the new fields.
 
 ## Decisions
 

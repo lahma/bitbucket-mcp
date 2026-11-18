@@ -79,6 +79,42 @@ public class McpServerManifestTests
         Assert.That(manifest.RootElement.GetProperty("name").GetString(), Is.EqualTo("io.github.lahma/bitbucket-mcp"));
     }
 
+    /// <summary>
+    /// The shape the official MCP Registry accepts. Nothing publishes there yet, but the registry
+    /// proves ownership against the README packed into the nupkg of the exact version being listed,
+    /// so a version shipped without these can never be listed later.
+    /// </summary>
+    [Test]
+    public void ManifestIsOneTheMcpRegistryAccepts()
+    {
+        var root = FindRepositoryRoot();
+        using var manifest = ReadManifest(root);
+
+        Assert.That(
+            manifest.RootElement.GetProperty("$schema").GetString(),
+            Is.EqualTo("https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"));
+
+        // The schema's maxLength; a longer description is rejected outright.
+        Assert.That(manifest.RootElement.GetProperty("description").GetString(), Has.Length.LessThanOrEqualTo(100));
+
+        // Exactly the NuGet service index, or the registry refuses the package entry.
+        Assert.That(
+            SingleNuGetPackage(manifest).GetProperty("registryBaseUrl").GetString(),
+            Is.EqualTo("https://api.nuget.org/v3/index.json"));
+    }
+
+    /// <summary>The ownership marker the registry looks for in the packaged README.</summary>
+    [Test]
+    public void ReadmeCarriesTheRegistryOwnershipMarker()
+    {
+        var root = FindRepositoryRoot();
+        using var manifest = ReadManifest(root);
+
+        var name = manifest.RootElement.GetProperty("name").GetString();
+
+        Assert.That(File.ReadAllText(Path.Combine(root, "README.md")), Does.Contain($"mcp-name: {name}"));
+    }
+
     private static JsonElement SingleNuGetPackage(JsonDocument manifest)
     {
         var packages = manifest.RootElement.GetProperty("packages")

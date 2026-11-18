@@ -1,5 +1,7 @@
 # bitbucket-mcp
 
+<!-- mcp-name: io.github.lahma/bitbucket-mcp -->
+
 A self-owned [Model Context Protocol](https://modelcontextprotocol.io) server for **Bitbucket
 Cloud**, covering the full pull-request lifecycle and Bitbucket Pipelines build diagnosis in
 twenty-two tools — list, read, diff, comment, edit, resolve, task, review, create, update, check what
@@ -82,7 +84,7 @@ The Linux binaries need glibc 2.34 or newer — Ubuntu 22.04, Debian 12, RHEL 9 
 successors. The release checks that floor on every build, so it cannot move without a release note.
 
 ```bash
-tar -xzf bitbucket-mcp-1.2.1-linux-x64.tar.gz
+tar -xzf bitbucket-mcp-1.3.0-linux-x64.tar.gz
 chmod +x bitbucket-mcp
 ./bitbucket-mcp --version
 ```
@@ -106,7 +108,7 @@ The same server is published to nuget.org as
 there is nothing to install and nothing to keep up to date by hand:
 
 ```bash
-dnx bitbucket-mcp@1.2.1 --yes status
+dnx bitbucket-mcp@1.3.0 --yes status
 ```
 
 `--yes` accepts the download prompt and is consumed by `dnx` itself; everything after it is passed
@@ -119,7 +121,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
     "bitbucket": {
       "type": "stdio",
       "command": "dnx",
-      "args": ["bitbucket-mcp@1.2.1", "--yes"],
+      "args": ["bitbucket-mcp@1.3.0", "--yes"],
       "env": {
         "BITBUCKET_OAUTH_KEY": "...",
         "BITBUCKET_OAUTH_SECRET": "..."
@@ -129,7 +131,7 @@ trailing verb the server speaks MCP over stdio, which is how a client should lau
 }
 ```
 
-Pin the version (`@1.2.1`) rather than floating: an MCP server is something an agent runs on your
+Pin the version (`@1.3.0`) rather than floating: an MCP server is something an agent runs on your
 behalf, and a pinned version is one you decided to run. This half is framework-dependent, so it
 needs the .NET 10 SDK — if a client reports *the command "dnx" was not found*, that is what is
 missing. Cold start is tens of milliseconds rather than the AOT binary's ten, and the first run

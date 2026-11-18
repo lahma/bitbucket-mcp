@@ -1,8 +1,8 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.lahma/bitbucket-mcp",
-  "description": "Bitbucket Cloud pull requests and Pipelines over MCP: list, read, diff, comment, review, merge and decline, plus find a failing build, the step that broke and the line of its log that says why.",
-  "version": "1.2.1",
+  "description": "Bitbucket Cloud pull requests and Pipelines: review, comment, merge, and diagnose failed builds.",
+  "version": "1.3.0",
   "repository": {
     "url": "https://github.com/lahma/bitbucket-mcp",
     "source": "github"
@@ -10,9 +10,9 @@
   "packages": [
     {
       "registryType": "nuget",
-      "registryBaseUrl": "https://api.nuget.org",
+      "registryBaseUrl": "https://api.nuget.org/v3/index.json",
       "identifier": "bitbucket-mcp",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "transport": {
         "type": "stdio"
       },
