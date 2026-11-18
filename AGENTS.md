@@ -37,7 +37,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 6. LF line endings everywhere (`.gitattributes` enforces it). `TreatWarningsAsErrors` is on —
    the compiler and analyzers are the lint step.
 
-## Design decisions (D1–D23)
+## Design decisions (D1–D24)
 
 | # | Decision |
 |---|---|
@@ -64,6 +64,7 @@ for one person to audit — treat that as a hard constraint, not a preference.
 | D21 | **An empty `reviewers` array means an empty reviewer list.** `null` and `[]` are different: omitting the field lets Bitbucket apply the repository's default-reviewer rule, while `[]` sends `"reviewers": []` and is the only way to say "nobody". This reverses the original choice — `CleanList` folded both to null, so clearing was inexpressible — because opening pull requests without default reviewers is a normal thing to want, and on `updatePullRequest` there was otherwise no way to remove a reviewer at all. `CleanListPreservingEmpty` keeps the two apart; `CleanList` is unchanged and still serves `paths`. | |
 | D22 | **The plugin manifest writes to `CLAUDE_PLUGIN_OPTION_*`, never to the plain variable names.** A Claude Code manifest maps every declared option into the server's environment through a `${user_config.X}` placeholder, and an option the user never filled in substitutes as the **empty string** rather than being omitted — so mapping it onto `BITBUCKET_ACCESS_TOKEN` set that variable to `""` in the child process and shadowed a value the user already had ([#4](https://github.com/lahma/bitbucket-mcp/issues/4)). With three auth mechanisms in a precedence chain the failure was silent: it demoted the caller to the next mechanism, or off the end of the chain into a browser sign-in nobody asked for. `BitbucketMcpOptions.ReadConfigured` therefore reads the prefixed name first, blank treated as absent, falling back to the plain one; a filled prompt still wins and a blank one changes nothing. `${user_config.KEY:-fallback}` is **not** an alternative — the substituter's capture group is `[^}]+`, so the whole `key:-fallback` string is looked up as an option name, is undefined, and throws, and the plugin fails to load. `PluginManifestTests` fails if the manifest is ever mapped back.
 | D23 | **The target framework stays `net10.0` (LTS) through .NET 11.** Measured 2026-11-18 on SDK 10.0.404 and 11.0.100: `net11.0` grows the win-x64 AOT binary 2% (all of it runtime), leaves startup unchanged, and ends support the same month (2028-11). Its one gain — the server's restore graph falling from 21 packages to 12, because .NET 11 moved `Microsoft.Extensions.*.Abstractions`, `Options` and `Primitives` into the shared framework — exists only with `net11.0` *alone*, and `net11.0` alone breaks `dnx` (and with it the Claude Code plugin) for anyone without the .NET 11 runtime; carrying `net10.0` as well keeps the old graph. It needs no `NuGet.Frameworks` pin in `build/`: that pin was load-bearing only while Fallout's `ITest` evaluated test projects in-process, and the hand-written `Test` target (D11) does not — SDK 11.0.100 with `net11.0` runs the simulated CI `Test` green without it (2026-11-18). Revisit at .NET 12 LTS, or when RID-specific AOT tool packages decouple `dnx` from the installed runtime. |
+| D24 | **An argument the schema does not name is refused, not dropped.** The SDK binds arguments by exact name and ignores the rest, so a mis-cased required argument failed with a bare "An error occurred invoking", and a mis-cased optional one vanished — `Workspace` for `workspace` silently ran the call against `BITBUCKET_DEFAULT_WORKSPACE`, which for a write tool is a change in the wrong place. A call-tool filter registered by `McpServerSetup.WithBitbucketTools` checks the names in `arguments` against the tool's input schema before the tool runs (`ToolArguments`) and answers with a tool error that names each unknown argument and, when only the case differs, the spelling meant. It is a tool error, not a protocol error, because the model is what has to correct the call. Only `arguments` is checked: `_meta` and anything else a client adds travel beside it in `params`. `ToolArgumentTests` asserts every tool accepts all of its own schema's names, and drives the filter through a real `McpClient`. |
 
 ### Risks carried (R3–R5)
 
@@ -305,7 +306,8 @@ transitive `Fallout.Utilities.Net` — no new `PackageReference` anywhere, and n
                             /.mcp/server.json; its version must match CHANGELOG.md (test-enforced)
 src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-mcp
   Program.cs                Entry point — hands argv straight to the CLI dispatcher
-  McpServerSetup.cs         DI wiring, JSON options (D6), tool registration, stdio run loop
+  McpServerSetup.cs         DI wiring, JSON options (D6), tool registration with the argument-name
+                            guard (D24), stdio run loop
   ServerVersion.cs          Product name + version, read from the assembly (build stamps it)
   Cli/                      login / logout / status / help (D15). The ONLY place stdout is legal
   Configuration/            BitbucketMcpOptions.FromEnvironment() — the complete env-var surface
@@ -320,8 +322,8 @@ src/Bitbucket.Mcp/          One production project (D1); AssemblyName bitbucket-
   Pipelines/                LogReducer (tail/head/search + ANSI stripping), LogExcerpt, LogReadMode
                             — the Diffs/ analogue, and the only novel logic in the pipeline surface
   Tools/                    PullRequestReadTools, PullRequestWriteTools, PipelineReadTools,
-                            ToolDefaults, ToolErrors, ResultMapper (+ ResultMapper.Pipelines),
-                            ServerInstructions
+                            ToolDefaults, ToolErrors, ToolArguments (D24), ResultMapper
+                            (+ ResultMapper.Pipelines), ServerInstructions
   Tools/Models/             Result records and BitbucketToolJsonContext (camelCase)
 tests/Bitbucket.Mcp.Tests/  The single test project; internals visible via InternalsVisibleTo
 .github/workflows/          build.yml and publish.yml are GENERATED from the two [GitHubActions]
