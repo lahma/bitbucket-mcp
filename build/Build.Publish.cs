@@ -68,11 +68,15 @@ partial class Build
     /// <summary>The nuget.org service-index resource a package version's README is served through.</summary>
     const string ReadmeUriTemplateResource = "ReadmeUriTemplate/6.13.0";
 
+    /// <summary>The nuget.org service-index resource packages are downloaded from - the one <c>dnx</c> reads.</summary>
+    const string PackageBaseAddressResource = "PackageBaseAddress/3.0.0";
+
     /// <summary>
-    /// How long <c>PublishMcpRegistry</c> waits for nuget.org to serve the README of the version just
-    /// pushed. Validation and indexing took about nine minutes for 1.3.1; this leaves room for a slow day.
+    /// How long <c>PublishMcpRegistry</c> waits for nuget.org to serve the version just pushed - its README
+    /// and every package. For 1.4.0 the README took about six minutes and the last native package about
+    /// fourteen; sonarqube-mcp has seen 25. This leaves room for a slow day.
     /// </summary>
-    static readonly TimeSpan NuGetReadmeTimeout = TimeSpan.FromMinutes(40);
+    static readonly TimeSpan NuGetIndexTimeout = TimeSpan.FromMinutes(45);
 
     /// <summary>
     /// How long <c>CollectRuntimePackages</c> waits for the release legs to upload their packages. A leg
@@ -306,13 +310,15 @@ partial class Build
     /// D25. The registry proves ownership of <c>io.github.lahma/...</c> by finding
     /// <c>mcp-name: &lt;server name&gt;</c> in the README nuget.org serves for this exact version, and
     /// refuses the publish until it can, so the target first waits for that README - through the same
-    /// service-index resource the registry reads it from. It runs after <c>Publish</c>, so a registry
+    /// service-index resource the registry reads it from. nuget.org serves the README minutes before the
+    /// packages, so it then waits for every package of the version as well: a listing is an invitation to
+    /// run <c>dnx</c>, and it should not go out before <c>dnx</c> can install. It runs after <c>Publish</c>, so a registry
     /// failure cannot hold up or undo the nuget.org push; it fails the job loudly instead, and a
     /// re-run is safe: <c>Publish</c> skips the duplicate push, and a version the registry already
     /// lists is reported and left alone (versions there are immutable).
     /// </remarks>
     Target PublishMcpRegistry => _ => _
-        .Description("Lists .mcp/server.json in the MCP Registry once nuget.org serves this version's README")
+        .Description("Lists .mcp/server.json in the MCP Registry once nuget.org serves this version's README and packages")
         .DependsOn(Publish)
         // Not ShouldPublish(): Publish already explained the skip, and the summary names this condition.
         .OnlyWhenDynamic(() => IsTaggedBuild)
@@ -334,7 +340,11 @@ partial class Build
                 return;
             }
 
-            WaitForPackageReadme(client, packageId, serverName);
+            var serviceIndex = JsonNode.Parse(client.GetStringAsync(NuGetSource).GetAwaiter().GetResult())!;
+            var deadline = DateTimeOffset.UtcNow + NuGetIndexTimeout;
+
+            WaitForPackageReadme(client, serviceIndex, deadline, packageId, serverName);
+            WaitForPackagesServed(client, serviceIndex, deadline);
 
             var registryToken = client
                 .CreateRequest(HttpMethod.Post, $"{McpRegistryUrl}/v0/auth/github-oidc")
@@ -394,19 +404,12 @@ partial class Build
     /// registry's ownership marker - a README without it is refused outright, so waiting longer would
     /// not help.
     /// </summary>
-    void WaitForPackageReadme(HttpClient client, string packageId, string serverName)
+    void WaitForPackageReadme(HttpClient client, JsonNode serviceIndex, DateTimeOffset deadline, string packageId, string serverName)
     {
-        var template = JsonNode.Parse(client.GetStringAsync(NuGetSource).GetAwaiter().GetResult())!["resources"]!
-            .AsArray()
-            .FirstOrDefault(x => x!["@type"]!.GetValue<string>() == ReadmeUriTemplateResource)
-            .NotNull($"nuget.org's service index has no {ReadmeUriTemplateResource}")!["@id"]!
-            .GetValue<string>();
-
-        var url = template
+        var url = ServiceResource(serviceIndex, ReadmeUriTemplateResource)
             .Replace("{lower_id}", packageId.ToLowerInvariant(), StringComparison.Ordinal)
             .Replace("{lower_version}", Version.ToLowerInvariant(), StringComparison.Ordinal);
         var marker = $"mcp-name: {serverName}";
-        var deadline = DateTimeOffset.UtcNow + NuGetReadmeTimeout;
 
         while (true)
         {
@@ -422,7 +425,7 @@ partial class Build
             }
 
             Assert.True(DateTimeOffset.UtcNow < deadline,
-                $"nuget.org still did not serve {url} after {NuGetReadmeTimeout.TotalMinutes:0} minutes. The package " +
+                $"nuget.org still did not serve {url} after {NuGetIndexTimeout.TotalMinutes:0} minutes. The package " +
                 "is pushed; re-run the job once it does.");
 
             Log.Information("Waiting for nuget.org to serve the README of {Package} {Version} ({Status})",
@@ -430,6 +433,51 @@ partial class Build
             Thread.Sleep(PollInterval);
         }
     }
+
+    /// <summary>
+    /// Polls until nuget.org serves every package of this version - each RID package, the fallback and
+    /// the pointer - from the address <c>dnx</c> downloads them from. nuget.org validates and indexes each
+    /// package on its own, and the native ones, at 6-7 MB, come last.
+    /// </summary>
+    void WaitForPackagesServed(HttpClient client, JsonNode serviceIndex, DateTimeOffset deadline)
+    {
+        var baseAddress = ServiceResource(serviceIndex, PackageBaseAddressResource).TrimEnd('/');
+        var version = Version.ToLowerInvariant();
+        var pending = NativeRuntimes.Append("any")
+            .Select(x => $"{PackageId}.{x}")
+            .Append(PackageId)
+            .Select(x => x.ToLowerInvariant())
+            .ToList();
+
+        while (true)
+        {
+            pending.RemoveAll(id =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Head, $"{baseAddress}/{id}/{version}/{id}.{version}.nupkg");
+                using var response = client.SendAsync(request).GetAwaiter().GetResult();
+                return response.IsSuccessStatusCode;
+            });
+
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            Assert.True(DateTimeOffset.UtcNow < deadline,
+                $"nuget.org still did not serve {string.Join(", ", pending)} {Version} after {NuGetIndexTimeout.TotalMinutes:0} " +
+                "minutes. The packages are pushed; re-run the job once it does.");
+
+            Log.Information("Waiting for nuget.org to serve {Packages} {Version}", string.Join(", ", pending), Version);
+            Thread.Sleep(PollInterval);
+        }
+    }
+
+    /// <summary>The <c>@id</c> of one resource of nuget.org's service index.</summary>
+    static string ServiceResource(JsonNode serviceIndex, string type) =>
+        serviceIndex["resources"]!.AsArray()
+            .FirstOrDefault(x => x!["@type"]!.GetValue<string>() == type)
+            .NotNull($"nuget.org's service index has no {type}")!["@id"]!
+            .GetValue<string>();
 
     void PushPackages(IReadOnlyCollection<AbsolutePath> packages, string apiKey) =>
         DotNetNuGetPush(_ => _
