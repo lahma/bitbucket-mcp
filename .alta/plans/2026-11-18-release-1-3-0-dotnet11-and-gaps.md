@@ -1,6 +1,6 @@
 ---
 title: Release 1.3.0 — the .NET 11-era toolchain on .NET 10 LTS, NUnit on MTP, merge queues and review gaps
-status: in-progress
+status: done
 created: 2026-11-18
 summary: Take Fallout 10.5.0 and MCP SDK 2.4.0, drop the NuGet.Frameworks pin, move the tests to NUnit 5 on Microsoft.Testing.Platform, keep the Linux glibc floor, and close the gaps that make merges and review replies fail. The target framework stays net10.0, because measurements show net11.0 gains nothing for the shipped binary and would break dnx users on .NET 10.
 ---
@@ -304,7 +304,7 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 - [x] 14. `updatePullRequestComment` (§7) in `PullRequestWriteTools` (Destructive=true, Idempotent=true). Refuse both or neither of `content`/`delete`. Tests for edit, delete and the arity guard.
 - [x] 15. `getPullRequestComments`: add `q=deleted=false` in `GetCommentsAsync` and an `unresolvedOnly` parameter. Try `resolution=null` in BBQL against a live repository first; if Bitbucket refuses it, filter client-side and say so in the description. Keep the `ResultMapper.Comments` deleted check as a backstop and say why in its comment.
 - [x] 16. `listPullRequests`: `reviewer` and `destinationBranch` through the existing BBQL composer (`BitbucketApiClient.cs` around line 1019) and `ToolDefaults.ResolveBranchFilter`'s refusal rule for quotes and backslashes.
-- [ ] 17. Test reports (§8): capture live responses into `Fixtures/` first. If the shape is usable, add `includeFailedTests` to `getPipeline`, a field set that includes `next` (`FieldSetTests` enforces it), and tests. While in `FieldSets.cs`, move the misplaced `Task` doc comment that sits above `Pipelines` back to `Task`. If the shape is not usable, drop the step and record why here.
+- [ ] 17. **Dropped from 1.3.0** (see the Phase B note). Test reports (§8): capture live responses into `Fixtures/` first. If the shape is usable, add `includeFailedTests` to `getPipeline`, a field set that includes `next` (`FieldSetTests` enforces it), and tests. While in `FieldSets.cs`, move the misplaced `Task` doc comment that sits above `Pipelines` back to `Task`. If the shape is not usable, drop the step and record why here.
 - [x] 18. Inventory in its six places for the two new tools:
   - the AGENTS.md *Tool table*;
   - `ToolInventoryTests` (names, counts, annotation rows);
@@ -325,7 +325,7 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 
   The sonarqube-mcp repository makes the same change in its next release; keep the two in the same shape.
 - [x] 20. `CHANGELOG.md` `# 1.3.0`, and the version in `.mcp/server.json` (both fields), `.claude-plugin/plugin.json` with its `dnx` pin, and the `VersionPrefix` fallback in `Directory.Build.props`. The manifest tests enforce all of these. In the changelog, add lines on the Linux glibc 2.34 floor, merge-queue behavior, and the move to NUnit on MTP (for contributors).
-- [ ] 21. Run `release.yml` by `workflow_dispatch` on the branch. All five legs must be green, the Linux legs must print `requires GLIBC_2.34` or lower, and the win-x64 zip, now built with SharpCompress, must download, extract and run `bitbucket-mcp status`.
+- [x] 21. Run `release.yml` by `workflow_dispatch` on the branch. All five legs must be green, the Linux legs must print `requires GLIBC_2.34` or lower, and the win-x64 zip, now built with SharpCompress, must download, extract and run `bitbucket-mcp status`.
 
 ## How it is verified
 
@@ -333,13 +333,13 @@ With §6 and §7 the inventory grows from 20 to 22 tools. `tools/list` is 54,763
 - [x] The converted suite discovers at least the 686 baseline cases, plus the new tests from Phase B (722: 721 pass, 1 platform skip).
 - [x] `GITHUB_ACTIONS=true dotnet fallout Test` is green with no `NuGet.Frameworks` reference, and a deliberately failing assert produces a `::error` annotation.
 - [x] `dotnet list build/_build.csproj package --vulnerable --include-transitive` reports nothing.
-- [ ] Live, against a real workspace:
+- [ ] Live, against a real workspace — **waived at release** (no Bitbucket credentials on the build machine). The one change that could break an existing tool without it, server-side `deleted = false`, was removed instead; what remains unverified is additive:
   - merge into a branch with a merge queue: progress appears, and the call returns `QUEUED` or `MERGED`;
   - `getPullRequestMergeability` on a PR missing an approval shows that check blocking;
   - edit and then delete one's own comment;
   - `unresolvedOnly` on a PR with mixed threads;
   - a failed step with JUnit output, for step 17.
-- [ ] The release dry run (step 21) is green on all five runners.
+- [x] The release dry run is green on all five runners (osx-arm64 on a rerun after GitHub cancelled it for lack of macOS capacity). Both Linux legs need `GLIBC_2.34`; the win-x64 zip extracts and answers `status`; the tarball's modes are `0755`/`0644`.
 - [x] The packed `artifacts/packages/bitbucket-mcp.1.3.0.nupkg` contains `README.md` with the `mcp-name` line, and `.mcp/server.json` with the new fields.
 
 ## Decisions
