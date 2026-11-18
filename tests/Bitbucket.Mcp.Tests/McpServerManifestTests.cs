@@ -15,8 +15,8 @@ namespace Bitbucket.Mcp.Tests;
 /// It restates two things the build already knows — the version and the package id — and nothing
 /// in the build reads it back, so a released package could advertise last release's version
 /// indefinitely without anything failing. That is what this test is for. It follows the same
-/// source-scanning shape as <see cref="Tools.NoStdoutWritesTest"/>: walk up from the test assembly
-/// to the repository root, then read the checked-in files rather than anything generated.
+/// source-scanning shape as <see cref="Tools.NoStdoutWritesTest"/>: it reads the checked-in files
+/// from <see cref="RepositoryRoot"/> rather than anything generated.
 /// </para>
 /// <para>
 /// The manifest is read with <see cref="JsonDocument"/> rather than deserialized into a record,
@@ -26,9 +26,6 @@ namespace Bitbucket.Mcp.Tests;
 /// </remarks>
 public class McpServerManifestTests
 {
-    /// <summary>The file that identifies the repository root when walking up from the test assembly.</summary>
-    private const string RootMarker = "bitbucket-mcp.slnx";
-
     private const string ManifestPath = ".mcp/server.json";
     private const string ChangelogPath = "CHANGELOG.md";
     private const string ServerProjectPath = "src/Bitbucket.Mcp/Bitbucket.Mcp.csproj";
@@ -36,7 +33,7 @@ public class McpServerManifestTests
     [Test]
     public void ManifestVersionMatchesTheChangelog()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         var changelogVersion = ReadChangelogVersion(root);
 
         using var manifest = ReadManifest(root);
@@ -49,7 +46,7 @@ public class McpServerManifestTests
     [Test]
     public void ManifestIdentifierMatchesThePackagedId()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
 
         var packageId = XDocument
             .Load(Path.Combine(root, ServerProjectPath))
@@ -71,7 +68,7 @@ public class McpServerManifestTests
     [Test]
     public void ManifestDeclaresExactlyOneStdioNuGetPackage()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         using var manifest = ReadManifest(root);
 
         var package = SingleNuGetPackage(manifest);
@@ -88,7 +85,7 @@ public class McpServerManifestTests
     [Test]
     public void ManifestIsOneTheMcpRegistryAccepts()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         using var manifest = ReadManifest(root);
 
         Assert.That(
@@ -108,7 +105,7 @@ public class McpServerManifestTests
     [Test]
     public void ReadmeCarriesTheRegistryOwnershipMarker()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         using var manifest = ReadManifest(root);
 
         var name = manifest.RootElement.GetProperty("name").GetString();
@@ -140,22 +137,5 @@ public class McpServerManifestTests
 
         Assert.That(first, Does.StartWith("# "));
         return first[2..].Trim();
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, RootMarker)))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException($"Could not find {RootMarker} above {AppContext.BaseDirectory}.");
     }
 }

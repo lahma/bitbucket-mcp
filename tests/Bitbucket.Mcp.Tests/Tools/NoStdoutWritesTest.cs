@@ -37,9 +37,6 @@ public class NoStdoutWritesTest
     /// <summary>The only directory allowed to touch the console, relative to the repository root.</summary>
     private const string AllowedDirectory = "src/Bitbucket.Mcp/Cli/";
 
-    /// <summary>The file that identifies the repository root when walking up from the test assembly.</summary>
-    private const string RootMarker = "bitbucket-mcp.slnx";
-
     /// <summary>
     /// Console members that can reach a standard stream. <c>Console.Error</c> is included even
     /// though stderr is safe: the rule is "the CLI owns the console", and a stderr write outside
@@ -60,7 +57,7 @@ public class NoStdoutWritesTest
     [Test]
     public void OnlyTheCliWritesToTheConsole()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot.FullPath;
         var sourceFiles = EnumerateProductionSources(root).ToList();
 
         // Self-check: a broken root lookup must fail loudly rather than scan nothing.
@@ -95,32 +92,14 @@ public class NoStdoutWritesTest
         Assert.That(cliUsages > 0, Is.True, "The scan found no console usage even in " + AllowedDirectory + ".");
     }
 
-    private static DirectoryInfo FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, RootMarker)))
-            {
-                return directory;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException(
-            $"Could not find {RootMarker} above {AppContext.BaseDirectory}.");
-    }
-
     /// <summary>Every hand-written server source file, as (repository-relative path, source text).</summary>
-    private static IEnumerable<(string RelativePath, string Code)> EnumerateProductionSources(DirectoryInfo root)
+    private static IEnumerable<(string RelativePath, string Code)> EnumerateProductionSources(string root)
     {
-        var source = Path.Combine(root.FullName, "src");
+        var source = Path.Combine(root, "src");
 
         foreach (var file in Directory.EnumerateFiles(source, "*.cs", SearchOption.AllDirectories))
         {
-            var relative = Path.GetRelativePath(root.FullName, file).Replace('\\', '/');
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
 
             // Generated output, not source: obj/ holds the JSON source generator's files and the
             // assembly-info the SDK writes.

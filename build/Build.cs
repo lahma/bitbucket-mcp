@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 using Fallout.Common;
@@ -29,8 +30,9 @@ using static Fallout.Common.Tools.DotNet.DotNetTasks;
 /// Restore / Compile come from the Fallout.Components interfaces. Three targets are hand-written:
 /// <c>Test</c>, because Fallout's <c>ITest</c> speaks only VSTest and the suite runs on
 /// Microsoft.Testing.Platform (D11); and the two that are specific to shipping a Native AOT MCP
-/// server, <c>PublishAot</c> (publish + archive per RID) and <c>SmokeTest</c> (a real stdio
-/// JSON-RPC handshake against the published binary).
+/// server, <c>PublishAot</c> (publish + archive per RID, held to the glibc floor on Linux) and
+/// <c>SmokeTest</c> (a real stdio JSON-RPC handshake against the published binary). The NuGet
+/// targets, which handshake the binaries inside the packages the same way, are in Build.Publish.cs.
 /// </remarks>
 [ShutdownDotNetAfterServerBuild]
 partial class Build : FalloutBuild,
@@ -84,6 +86,17 @@ partial class Build : FalloutBuild,
         "listCodeInsights",
     ];
 
+    /// <summary>
+    /// The newest glibc a Linux binary may need, which makes it the oldest Linux it starts on (glibc
+    /// 2.34: Ubuntu 22.04, Debian 12, RHEL 9). Read off the v1.2.1 release binaries, both architectures.
+    /// </summary>
+    /// <remarks>
+    /// The floor follows the image a binary is built on, not anything in this repository, so
+    /// <see cref="AssertGlibcFloor"/> fails a binary that needs more. Raise it only on purpose, together
+    /// with README.md's requirement.
+    /// </remarks>
+    static readonly System.Version MaxGlibc = new(2, 34);
+
     /// <summary>How long SmokeTest waits for both JSON-RPC responses before giving up.</summary>
     static readonly TimeSpan SmokeTestTimeout = TimeSpan.FromSeconds(30);
 
@@ -108,6 +121,7 @@ partial class Build : FalloutBuild,
     AbsolutePath ReleaseNotesFile => ArtifactsDirectory / "release-notes.md";
 
     bool IsWindowsRuntime => Runtime.StartsWith("win", StringComparison.OrdinalIgnoreCase);
+    bool IsLinuxRuntime => Runtime.StartsWith("linux", StringComparison.OrdinalIgnoreCase);
     string ExecutableName => IsWindowsRuntime ? ProductName + ".exe" : ProductName;
     string ArchiveExtension => IsWindowsRuntime ? ".zip" : ".tar.gz";
     AbsolutePath PublishedExecutable => PublishDirectory / ExecutableName;
@@ -226,6 +240,8 @@ partial class Build : FalloutBuild,
             Assert.True(PublishedExecutable.FileExists(),
                 $"Native AOT publish did not produce '{PublishedExecutable}'");
 
+            var glibc = IsLinuxRuntime ? AssertGlibcFloor(PublishedExecutable) : null;
+
             // Archive exactly the three files a user needs, not the whole publish directory.
             StagingDirectory.CreateOrCleanDirectory();
             PublishedExecutable.CopyToDirectory(StagingDirectory, ExistsPolicy.FileOverwrite);
@@ -257,52 +273,108 @@ partial class Build : FalloutBuild,
             Log.Information("Created {Archive}", ArchiveFile);
             ReportSummary(_ => _
                 .AddPair("Runtime", Runtime)
-                .AddPair("Archive", ArchiveFile.Name));
+                .AddPair("Archive", ArchiveFile.Name)
+                .AddPairWhenValueNotNull("Needs glibc", glibc));
         });
+
+    /// <summary>
+    /// Fails when a Linux binary needs a newer glibc than <see cref="MaxGlibc"/>, and returns the
+    /// version it does need.
+    /// </summary>
+    /// <remarks>
+    /// A Native AOT binary links against the glibc of the machine that built it and refuses to start
+    /// on an older one, so the floor moves whenever a runner image does, with nothing in the repository
+    /// changing. Read off the binary's dynamic symbols with <c>objdump -T</c>, which every Linux runner
+    /// has; only Linux runtimes are checked, and those only build on Linux.
+    /// </remarks>
+    string AssertGlibcFloor(AbsolutePath executable)
+    {
+        var highest = ProcessTasks.StartProcess("objdump", $"-T {executable}", logOutput: false)
+            .AssertWaitForExit()
+            .AssertZeroExitCode()
+            .Output
+            .SelectMany(x => GlibcSymbolVersion().Matches(x.Text))
+            .Select(x => System.Version.Parse(x.Groups[1].Value))
+            .DefaultIfEmpty()
+            .Max();
+
+        if (highest == null)
+        {
+            Log.Information("{Executable} names no glibc version", executable);
+            return null;
+        }
+
+        Assert.True(highest <= MaxGlibc,
+            $"'{executable}' needs GLIBC_{highest}, newer than the floor GLIBC_{MaxGlibc}, so it would no longer " +
+            "start on every Linux README.md promises. The build image has most likely moved: build on the older " +
+            "one, or raise MaxGlibc in build/Build.cs and the README's requirement on purpose.");
+
+        Log.Information("{Executable} needs glibc {Highest} or newer (floor {Floor})", executable, highest, MaxGlibc);
+        return highest.ToString();
+    }
+
+    [GeneratedRegex(@"GLIBC_(\d+(?:\.\d+)+)")]
+    private static partial Regex GlibcSymbolVersion();
 
     Target SmokeTest => _ => _
         .Description("Runs a real stdio JSON-RPC handshake against the published AOT binary")
         .DependsOn(PublishAot)
         .Executes(() =>
         {
-            var responses = RunHandshake();
+            var (tools, toolsListBytes) = AssertServerAnswers(new ServerUnderTest(PublishedExecutable, string.Empty, PublishDirectory));
 
-            var serverName = responses[InitializeId]
-                .GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString();
-            Assert.True(serverName == ProductName,
-                $"initialize returned serverInfo.name '{serverName}', expected '{ProductName}'");
-
-            var toolsElement = responses[ToolsListId].GetProperty("result").GetProperty("tools");
-            Assert.True(toolsElement.ValueKind == JsonValueKind.Array,
-                $"tools/list returned a '{toolsElement.ValueKind}' for 'tools', expected an array");
-
-            var toolNames = toolsElement.EnumerateArray()
-                .Select(x => x.GetProperty("name").GetString())
-                .OrderBy(x => x, StringComparer.Ordinal)
-                .ToArray();
-            var expected = ExpectedToolNames.OrderBy(x => x, StringComparer.Ordinal).ToArray();
-
-            Assert.True(toolNames.SequenceEqual(expected, StringComparer.Ordinal),
-                $"tools/list returned [{string.Join(", ", toolNames)}], expected [{string.Join(", ", expected)}]");
-
-            // Every session that attaches the server pays for this payload in context, so its size is
-            // reported on every build: a tool or description that grows it shows up here first.
-            var toolsListBytes = Encoding.UTF8.GetByteCount(responses[ToolsListId].GetProperty("result").GetRawText());
-
-            Log.Information("Handshake OK: {Server} exposed {Count} tool(s), tools/list {Bytes} bytes",
-                serverName, toolNames.Length, toolsListBytes);
             ReportSummary(_ => _
-                .AddPair("Server", serverName)
-                .AddPair("Tools", toolNames.Length.ToString())
+                .AddPair("Server", ProductName)
+                .AddPair("Tools", tools.ToString())
                 .AddPair("tools/list bytes", toolsListBytes.ToString()));
         });
+
+    /// <summary>How to start one server under test: a native binary, or <c>dotnet</c> with a framework-dependent dll.</summary>
+    sealed record ServerUnderTest(string FileName, string Arguments, string WorkingDirectory);
+
+    /// <summary>
+    /// Drives one handshake against <paramref name="server"/> and asserts what every program this
+    /// repository ships must answer - its own name, and exactly <see cref="ExpectedToolNames"/> - before
+    /// returning how many tools it listed and the size of that list.
+    /// </summary>
+    (int Tools, int ToolsListBytes) AssertServerAnswers(ServerUnderTest server)
+    {
+        var responses = RunHandshake(server);
+
+        var serverName = responses[InitializeId]
+            .GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString();
+        Assert.True(serverName == ProductName,
+            $"initialize returned serverInfo.name '{serverName}', expected '{ProductName}'");
+
+        var toolsElement = responses[ToolsListId].GetProperty("result").GetProperty("tools");
+        Assert.True(toolsElement.ValueKind == JsonValueKind.Array,
+            $"tools/list returned a '{toolsElement.ValueKind}' for 'tools', expected an array");
+
+        var toolNames = toolsElement.EnumerateArray()
+            .Select(x => x.GetProperty("name").GetString())
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+        var expected = ExpectedToolNames.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
+        Assert.True(toolNames.SequenceEqual(expected, StringComparer.Ordinal),
+            $"tools/list returned [{string.Join(", ", toolNames)}], expected [{string.Join(", ", expected)}]");
+
+        // Every session that attaches the server pays for this payload in context, so its size is
+        // reported on every build: a tool or description that grows it shows up here first.
+        var toolsListBytes = Encoding.UTF8.GetByteCount(responses[ToolsListId].GetProperty("result").GetRawText());
+
+        Log.Information("Handshake OK: {Server} exposed {Count} tool(s), tools/list {Bytes} bytes",
+            serverName, toolNames.Length, toolsListBytes);
+
+        return (toolNames.Length, toolsListBytes);
+    }
 
     const int InitializeId = 1;
     const int ToolsListId = 2;
 
     /// <summary>
-    /// Spawns the published binary, drives one initialize / initialized / tools/list exchange and
-    /// returns the responses keyed by JSON-RPC id.
+    /// Spawns the server, drives one initialize / initialized / tools/list exchange and returns the
+    /// responses keyed by JSON-RPC id.
     /// </summary>
     /// <remarks>
     /// stdin is deliberately held open until both responses have been read: the stdio transport
@@ -310,7 +382,7 @@ partial class Build : FalloutBuild,
     /// stdin first loses responses. Responses are matched by id because the order is not
     /// guaranteed.
     /// </remarks>
-    IReadOnlyDictionary<int, JsonElement> RunHandshake()
+    IReadOnlyDictionary<int, JsonElement> RunHandshake(ServerUnderTest server)
     {
         // The literal ids must stay in sync with InitializeId / ToolsListId below; the JSON is
         // written out verbatim rather than interpolated so it reads exactly as it goes on the wire.
@@ -323,8 +395,9 @@ partial class Build : FalloutBuild,
 
         var startInfo = new ProcessStartInfo
                         {
-                            FileName = PublishedExecutable,
-                            WorkingDirectory = PublishDirectory,
+                            FileName = server.FileName,
+                            Arguments = server.Arguments,
+                            WorkingDirectory = server.WorkingDirectory,
                             UseShellExecute = false,
                             RedirectStandardInput = true,
                             RedirectStandardOutput = true,
@@ -352,7 +425,7 @@ partial class Build : FalloutBuild,
             }
         };
 
-        Log.Information("Starting {Executable}", PublishedExecutable);
+        Log.Information("Starting {Executable} {Arguments}", server.FileName, server.Arguments);
         process.Start();
         process.BeginErrorReadLine();
 
